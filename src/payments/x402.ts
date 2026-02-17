@@ -128,12 +128,15 @@ export async function loadPaymentsFromChain(agentNames: string[]): Promise<void>
         const p = await contract.getPayment(payId);
         const matchedName = agentNames.find(n => ethers.id(n) === p.agentId) ?? p.agentId;
 
+        const amountEth = parseFloat(ethers.formatEther(p.amount));
         const receipt: x402Receipt = {
           paymentId: `chain-${Number(p.id)}`,
           agentId: matchedName,
           caller: p.caller,
-          amount: parseFloat(ethers.formatEther(p.amount)),
+          publisher: p.publisher ?? '',
+          amount: amountEth,
           trustTier: skillProfiles.get(matchedName)?.trustTier ?? ('C' as TrustTier),
+          effectivePrice: amountEth,
           publisherPayout: parseFloat(ethers.formatEther(p.publisherPayout)),
           protocolPayout: parseFloat(ethers.formatEther(p.protocolPayout)),
           insurancePayout: parseFloat(ethers.formatEther(p.insurancePayout)),

@@ -40,6 +40,9 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'node:http';
+import { existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { initWebSocketServer } from './events/ws-server.js';
 import { trustHubEmitter } from './events/emitter.js';
 import type {
@@ -2000,6 +2003,28 @@ function startChainPolling(): void {
   }, POLL_INTERVAL_MS);
 
   console.log(`  Chain polling started (every ${POLL_INTERVAL_MS / 1000}s)`);
+}
+
+// ---------------------------------------------------------------------------
+// Static Dashboard Serving (Production)
+// ---------------------------------------------------------------------------
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const dashboardDist = join(__dirname, '..', '..', 'dashboard', 'dist');
+
+if (process.env.NODE_ENV === 'production' && existsSync(dashboardDist)) {
+  app.use(express.static(dashboardDist));
+
+  // SPA fallback: serve index.html for any non-API, non-WS route
+  app.use((req, res, next) => {
+    if (req.method === 'GET' && !req.path.startsWith('/api') && !req.path.startsWith('/ws')) {
+      res.sendFile(join(dashboardDist, 'index.html'));
+    } else {
+      next();
+    }
+  });
+  console.log('  [static] Serving dashboard from', dashboardDist);
 }
 
 // ---------------------------------------------------------------------------

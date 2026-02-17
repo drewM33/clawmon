@@ -1,0 +1,34 @@
+services:
+  - type: web
+    runtime: node
+    name: clawmon-api
+    repo: https://github.com/drewM33/clawmon.git
+    plan: free
+    buildCommand: npm install && npm run build && cd dashboard && npm install && npm run build
+    startCommand: node dist/src/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3001"
+      - key: DEMO_MODE
+        value: "true"
+      - key: MONAD_RPC_URL
+        sync: false
+      - key: MONAD_PRIVATE_KEY
+        sync: false
+      - key: MESSAGELOG_CONTRACT_ADDRESS
+        sync: false
+      - key: STAKING_CONTRACT_ADDRESS
+        sync: false
+      - key: DEPLOYER_PRIVATE_KEY
+        sync: false
+      - key: ATTESTATION_CONTRACT_ADDRESS
+        sync: false
+      - key: INSURANCE_CONTRACT_ADDRESS
+        sync: false
+      - key: PAYWALL_CONTRACT_ADDRESS
+        sync: false
+      - key: GOVERNANCE_CONTRACT_ADDRESS
+        sync: false
+    healthCheckPath: /api/health
