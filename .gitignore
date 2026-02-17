@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Hardhat artifacts
+artifacts/
+cache/
+typechain-types/
+
+# Environment files (contain private keys!)
+.env
+.env.local
+.env.demo
+
+# Keep the template
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# TypeScript cache
+*.tsbuildinfo
