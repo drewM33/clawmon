@@ -41,7 +41,7 @@ function ActivityItem({
   tx: TxNotification;
   onDismiss: (id: string) => void;
 }) {
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     timerRef.current = setTimeout(() => onDismiss(tx.id), AUTO_DISMISS_MS);
