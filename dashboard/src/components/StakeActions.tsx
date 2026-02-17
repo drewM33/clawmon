@@ -343,14 +343,30 @@ export default function StakeActions({
             Confirm in your wallet&hellip;
           </div>
         )}
-        {isConfirming && (
+        {isConfirming && txHash && (
           <div className="stake-status confirming">
             Transaction confirming&hellip;
+            <a
+              href={`https://testnet.monadexplorer.com/tx/${txHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="stake-tx-link"
+            >
+              {txHash.slice(0, 6)}...{txHash.slice(-4)} ↗
+            </a>
           </div>
         )}
-        {isConfirmed && (
+        {isConfirmed && txHash && (
           <div className="stake-status confirmed">
             Transaction confirmed!
+            <a
+              href={`https://testnet.monadexplorer.com/tx/${txHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="stake-tx-link"
+            >
+              {txHash.slice(0, 6)}...{txHash.slice(-4)} ↗
+            </a>
           </div>
         )}
 
