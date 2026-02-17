@@ -51,7 +51,7 @@ export default function InsurancePanel() {
         <div className="pool-hero">
           <div className="pool-balance-card">
             <div className="pool-balance-label">Pool Balance</div>
-            <div className="pool-balance-value">{pool.poolBalanceEth.toFixed(4)} ETH</div>
+            <div className="pool-balance-value">{pool.poolBalanceEth.toFixed(4)} MON</div>
             <div className="pool-balance-bar">
               <div
                 className="pool-balance-bar-fill"
@@ -90,7 +90,7 @@ export default function InsurancePanel() {
             <div className="insurance-stat-label">Rejected</div>
           </div>
           <div className="insurance-stat-card">
-            <div className="insurance-stat-value">{stats.avgPayoutEth.toFixed(4)} ETH</div>
+            <div className="insurance-stat-value">{stats.avgPayoutEth.toFixed(4)} MON</div>
             <div className="insurance-stat-label">Avg Payout</div>
           </div>
           <div className="insurance-stat-card">
@@ -217,11 +217,11 @@ export default function InsurancePanel() {
                       <span className="agent-name">{claim.agentId}</span>
                     </td>
                     <td className="col-stake">
-                      <span className="claim-amount">{claim.amountEth.toFixed(4)} ETH</span>
+                      <span className="claim-amount">{claim.amountEth.toFixed(4)} MON</span>
                     </td>
                     <td className="col-stake">
                       {claim.payoutAmountEth > 0 ? (
-                        <span className="claim-payout">{claim.payoutAmountEth.toFixed(4)} ETH</span>
+                        <span className="claim-payout">{claim.payoutAmountEth.toFixed(4)} MON</span>
                       ) : (
                         <span className="claim-no-payout">—</span>
                       )}
@@ -273,11 +273,11 @@ export default function InsurancePanel() {
                 >
                   <div className="payout-card-header">
                     <span className="payout-agent">{claim.agentId}</span>
-                    <span className="payout-amount">{claim.payoutAmountEth.toFixed(4)} ETH</span>
+                    <span className="payout-amount">{claim.payoutAmountEth.toFixed(4)} MON</span>
                   </div>
                   <div className="payout-details">
                     <span className="payout-claimed">
-                      Claimed: {claim.amountEth.toFixed(4)} ETH
+                      Claimed: {claim.amountEth.toFixed(4)} MON
                     </span>
                     <span className="payout-ratio">
                       ({((claim.payoutAmountEth / claim.amountEth) * 100).toFixed(0)}% of claim)

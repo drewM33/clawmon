@@ -27,7 +27,7 @@ export default function StakingPanel() {
       <div className="staking-header">
         <h2>Staking & Slashing</h2>
         <p className="subtitle">
-          Crypto-economic security — agents stake ETH as collateral, slashed for misbehavior
+          Crypto-economic security — agents stake MON as collateral, slashed for misbehavior
         </p>
       </div>
 
@@ -39,7 +39,7 @@ export default function StakingPanel() {
             <div className="staking-stat-label">Agents Staked</div>
           </div>
           <div className="staking-stat-card">
-            <div className="staking-stat-value">{stats.totalStakedEth.toFixed(3)} ETH</div>
+            <div className="staking-stat-value">{stats.totalStakedEth.toFixed(3)} MON</div>
             <div className="staking-stat-label">Total Staked</div>
           </div>
           <div className="staking-stat-card slash">
@@ -47,7 +47,7 @@ export default function StakingPanel() {
             <div className="staking-stat-label">Slash Events</div>
           </div>
           <div className="staking-stat-card slash">
-            <div className="staking-stat-value">{stats.totalSlashedEth.toFixed(4)} ETH</div>
+            <div className="staking-stat-value">{stats.totalSlashedEth.toFixed(4)} MON</div>
             <div className="staking-stat-label">Total Slashed</div>
           </div>
         </div>
@@ -164,7 +164,7 @@ export default function StakingPanel() {
                   <td className="col-slashes">
                     {item.slashCount > 0 ? (
                       <span className="slash-badge">
-                        {item.slashCount} ({item.totalSlashedEth.toFixed(4)} ETH)
+                        {item.slashCount} ({item.totalSlashedEth.toFixed(4)} MON)
                       </span>
                     ) : (
                       <span className="no-slash">Clean</span>
@@ -190,7 +190,7 @@ export default function StakingPanel() {
                   <div key={i} className="slash-card">
                     <div className="slash-card-header">
                       <span className="slash-agent">{slash.agentId}</span>
-                      <span className="slash-amount">-{slash.amountEth.toFixed(4)} ETH</span>
+                      <span className="slash-amount">-{slash.amountEth.toFixed(4)} MON</span>
                     </div>
                     <div className="slash-reason">{slash.reason}</div>
                     <div className="slash-meta">

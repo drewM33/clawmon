@@ -49,7 +49,7 @@ export default function PaywallPanel() {
         <div className="pool-hero">
           <div className="pool-balance-card">
             <div className="pool-balance-label">Total Protocol Revenue</div>
-            <div className="pool-balance-value">{stats.totalRevenueEth.toFixed(4)} ETH</div>
+            <div className="pool-balance-value">{stats.totalRevenueEth.toFixed(4)} MON</div>
             <div className="pool-balance-bar">
               {revenueTotal > 0 && (
                 <>
@@ -59,7 +59,7 @@ export default function PaywallPanel() {
                       width: `${(stats.totalPublisherPayoutsEth / revenueTotal) * 100}%`,
                       backgroundColor: '#22c55e',
                     }}
-                    title={`Publisher: ${stats.totalPublisherPayoutsEth.toFixed(4)} ETH`}
+                    title={`Publisher: ${stats.totalPublisherPayoutsEth.toFixed(4)} MON`}
                   />
                   <div
                     className="pool-balance-bar-fill"
@@ -67,7 +67,7 @@ export default function PaywallPanel() {
                       width: `${(stats.totalProtocolRevenueEth / revenueTotal) * 100}%`,
                       backgroundColor: '#3b82f6',
                     }}
-                    title={`Protocol: ${stats.totalProtocolRevenueEth.toFixed(4)} ETH`}
+                    title={`Protocol: ${stats.totalProtocolRevenueEth.toFixed(4)} MON`}
                   />
                   <div
                     className="pool-balance-bar-used"
@@ -75,7 +75,7 @@ export default function PaywallPanel() {
                       width: `${(stats.totalInsuranceContributionsEth / revenueTotal) * 100}%`,
                       backgroundColor: '#f59e0b',
                     }}
-                    title={`Insurance: ${stats.totalInsuranceContributionsEth.toFixed(4)} ETH`}
+                    title={`Insurance: ${stats.totalInsuranceContributionsEth.toFixed(4)} MON`}
                   />
                 </>
               )}
@@ -111,7 +111,7 @@ export default function PaywallPanel() {
             <div className="insurance-stat-label">Unique Callers</div>
           </div>
           <div className="insurance-stat-card">
-            <div className="insurance-stat-value">{stats.avgPaymentEth.toFixed(4)} ETH</div>
+            <div className="insurance-stat-value">{stats.avgPaymentEth.toFixed(4)} MON</div>
             <div className="insurance-stat-label">Avg Payment</div>
           </div>
           <div className="insurance-stat-card" style={{ borderColor: '#f59e0b40' }}>
@@ -137,7 +137,7 @@ export default function PaywallPanel() {
                 width: `${(stats.revenueByTier.premium / revenueTotal) * 100}%`,
                 backgroundColor: TIER_BAND_COLORS.premium,
               }}
-              title={`Premium: ${stats.revenueByTier.premium.toFixed(4)} ETH`}
+              title={`Premium: ${stats.revenueByTier.premium.toFixed(4)} MON`}
             >
               <span className="claim-dist-label">Premium</span>
             </div>
@@ -149,7 +149,7 @@ export default function PaywallPanel() {
                 width: `${(stats.revenueByTier.standard / revenueTotal) * 100}%`,
                 backgroundColor: TIER_BAND_COLORS.standard,
               }}
-              title={`Standard: ${stats.revenueByTier.standard.toFixed(4)} ETH`}
+              title={`Standard: ${stats.revenueByTier.standard.toFixed(4)} MON`}
             >
               <span className="claim-dist-label">Standard</span>
             </div>
@@ -161,7 +161,7 @@ export default function PaywallPanel() {
                 width: `${(stats.revenueByTier.budget / revenueTotal) * 100}%`,
                 backgroundColor: TIER_BAND_COLORS.budget,
               }}
-              title={`Budget: ${stats.revenueByTier.budget.toFixed(4)} ETH`}
+              title={`Budget: ${stats.revenueByTier.budget.toFixed(4)} MON`}
             >
               <span className="claim-dist-label">Budget</span>
             </div>
@@ -257,7 +257,7 @@ export default function PaywallPanel() {
                       <span>{item.totalPayments}</span>
                     </td>
                     <td className="col-stake">
-                      <span className="claim-amount">{item.totalRevenueEth.toFixed(4)} ETH</span>
+                      <span className="claim-amount">{item.totalRevenueEth.toFixed(4)} MON</span>
                     </td>
                     <td className="col-stake">
                       <span style={{ color: item.paymentVelocity > 5 ? '#f59e0b' : '#8b8b9b' }}>
@@ -290,7 +290,7 @@ export default function PaywallPanel() {
                 >
                   <div className="payout-card-header">
                     <span className="payout-agent">{item.agentId}</span>
-                    <span className="payout-amount">{item.amount.toFixed(4)} ETH</span>
+                    <span className="payout-amount">{item.amount.toFixed(4)} MON</span>
                   </div>
                   <div className="payout-details">
                     <span
@@ -353,7 +353,7 @@ export default function PaywallPanel() {
                     <span className="agent-name">{skill.agentId}</span>
                   </td>
                   <td className="col-stake">
-                    <span className="claim-payout">{skill.revenueEth.toFixed(4)} ETH</span>
+                    <span className="claim-payout">{skill.revenueEth.toFixed(4)} MON</span>
                   </td>
                   <td className="col-id">
                     <span>{skill.paymentCount}</span>
@@ -362,7 +362,7 @@ export default function PaywallPanel() {
                     <span className="claim-amount">
                       {skill.paymentCount > 0
                         ? (skill.revenueEth / skill.paymentCount).toFixed(4)
-                        : '0.0000'} ETH
+                        : '0.0000'} MON
                     </span>
                   </td>
                 </tr>

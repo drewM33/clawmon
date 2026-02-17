@@ -62,18 +62,18 @@ function VoteBar({ forVotes, againstVotes, quorumReached }: { forVotes: number; 
         <div
           className="vote-bar-for"
           style={{ width: `${forPct}%` }}
-          title={`For: ${forVotes.toFixed(4)} ETH (${forPct.toFixed(1)}%)`}
+          title={`For: ${forVotes.toFixed(4)} MON (${forPct.toFixed(1)}%)`}
         />
         <div
           className="vote-bar-against"
           style={{ width: `${againstPct}%` }}
-          title={`Against: ${againstVotes.toFixed(4)} ETH (${againstPct.toFixed(1)}%)`}
+          title={`Against: ${againstVotes.toFixed(4)} MON (${againstPct.toFixed(1)}%)`}
         />
       </div>
       <div className="vote-bar-labels">
-        <span className="vote-for-label">{forVotes.toFixed(3)} ETH For</span>
+        <span className="vote-for-label">{forVotes.toFixed(3)} MON For</span>
         {quorumReached && <span className="quorum-badge">Quorum</span>}
-        <span className="vote-against-label">{againstVotes.toFixed(3)} ETH Against</span>
+        <span className="vote-against-label">{againstVotes.toFixed(3)} MON Against</span>
       </div>
     </div>
   );
@@ -396,7 +396,7 @@ export default function GovernancePanel() {
                         {proposalDetail.parameter.unit === 'bps'
                           ? `${(proposalDetail.newValue / 100).toFixed(2)}%`
                           : proposalDetail.parameter.unit === 'ether'
-                            ? `${proposalDetail.newValue} ETH`
+                            ? `${proposalDetail.newValue} MON`
                             : proposalDetail.parameter.unit === 'seconds'
                               ? proposalDetail.newValue >= 86400
                                 ? `${(proposalDetail.newValue / 86400).toFixed(0)} days`
@@ -424,7 +424,7 @@ export default function GovernancePanel() {
                 />
                 <div className="vote-summary-meta">
                   <span>{proposalDetail.voterCount} voters</span>
-                  <span>{(proposalDetail.forVotes + proposalDetail.againstVotes).toFixed(4)} ETH total weight</span>
+                  <span>{(proposalDetail.forVotes + proposalDetail.againstVotes).toFixed(4)} MON total weight</span>
                   <span>Deadline: {formatDate(proposalDetail.votingDeadline)}</span>
                   {proposalDetail.executionTime > 0 && (
                     <span>Execution: {formatDate(proposalDetail.executionTime)}</span>
@@ -458,7 +458,7 @@ export default function GovernancePanel() {
                               </span>
                             </td>
                             <td className="col-stake">
-                              {vote.weight.toFixed(4)} ETH
+                              {vote.weight.toFixed(4)} MON
                             </td>
                             <td className="col-time">
                               {formatDate(vote.timestamp)}
@@ -535,7 +535,7 @@ export default function GovernancePanel() {
           <div className="governance-rule">
             <div className="governance-rule-icon">03</div>
             <div className="governance-rule-label">Quorum + Majority</div>
-            <div className="governance-rule-desc">0.05 ETH minimum quorum and simple majority required to pass</div>
+            <div className="governance-rule-desc">0.05 MON minimum quorum and simple majority required to pass</div>
           </div>
           <div className="governance-rule">
             <div className="governance-rule-icon">04</div>

@@ -86,7 +86,7 @@ function X402ReviewGate({ agentId, caller, onPaymentComplete }: {
             </span>
             {isVerified && latestReceipt && (
               <span className="x402-gate-step-receipt">
-                Last payment: {latestReceipt.amount.toFixed(4)} ETH
+                Last payment: {latestReceipt.amount.toFixed(4)} MON
                 &middot; {new Date(latestReceipt.timestamp).toLocaleDateString()}
               </span>
             )}

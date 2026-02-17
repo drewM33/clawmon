@@ -103,7 +103,7 @@ export default function SkillsPage() {
             <span className="hero-stat-label">Sybil Rings Caught</span>
           </div>
           <div className="hero-stat">
-            <span className="hero-stat-value">{totalStaked.toFixed(1)} ETH</span>
+            <span className="hero-stat-value">{totalStaked.toFixed(1)} MON</span>
             <span className="hero-stat-label">Total Staked</span>
           </div>
         </div>

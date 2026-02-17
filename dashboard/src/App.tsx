@@ -6,6 +6,7 @@ import SkillsPage from './components/SkillsPage';
 import NetworkGraph from './components/viz/NetworkGraph';
 import LiveFeedIndicator from './components/LiveFeedIndicator';
 import ConnectWallet from './components/ConnectWallet';
+import OnChainActivityFeed from './components/OnChainActivityFeed';
 import { useWebSocket } from './hooks/useWebSocket';
 
 export default function App() {
@@ -64,6 +65,8 @@ export default function App() {
           <span>ETHDenver 2026</span>
         </div>
       </footer>
+
+      <OnChainActivityFeed />
     </div>
   );
 }

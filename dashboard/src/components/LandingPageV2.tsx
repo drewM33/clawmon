@@ -149,11 +149,11 @@ export default function LandingPageV2() {
             { value: coveredCount ?? '...', label: 'Covered Skills' },
             { value: stats?.totalFeedback?.toLocaleString() ?? '...', label: 'Risk Assessments' },
             {
-              value: insuranceStats ? `${insuranceStats.poolBalanceEth.toFixed(2)} ETH` : stakingStats ? `${stakingStats.totalStakedEth.toFixed(1)} ETH` : '...',
+              value: insuranceStats ? `${insuranceStats.poolBalanceEth.toFixed(2)} MON` : stakingStats ? `${stakingStats.totalStakedEth.toFixed(1)} MON` : '...',
               label: 'Coverage Pool',
             },
             {
-              value: stakingStats ? `${stakingStats.totalStakedEth.toFixed(1)} ETH` : '...',
+              value: stakingStats ? `${stakingStats.totalStakedEth.toFixed(1)} MON` : '...',
               label: 'Underwriting Collateral',
             },
           ].map((stat, i) => (
@@ -605,12 +605,12 @@ export default function LandingPageV2() {
           <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
             {[
               {
-                value: insuranceStats ? `${insuranceStats.poolBalanceEth.toFixed(2)} ETH` : '...',
+                value: insuranceStats ? `${insuranceStats.poolBalanceEth.toFixed(2)} MON` : '...',
                 label: 'Pool Balance',
                 color: 'var(--color-success)',
               },
               {
-                value: insuranceStats ? `${insuranceStats.totalDepositedEth.toFixed(2)} ETH` : '...',
+                value: insuranceStats ? `${insuranceStats.totalDepositedEth.toFixed(2)} MON` : '...',
                 label: 'Total Deposited',
                 color: 'var(--color-staking)',
               },

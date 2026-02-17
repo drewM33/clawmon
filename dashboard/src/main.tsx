@@ -5,6 +5,7 @@ import { WagmiProvider } from 'wagmi';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { wagmiConfig } from './config/wagmi';
 import { AuthProvider } from './context/AuthContext';
+import { TransactionFeedProvider } from './context/TransactionFeedContext';
 import App from './App';
 import './styles/tokens.css';
 import './App.css';
@@ -16,9 +17,11 @@ createRoot(document.getElementById('root')!).render(
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
+          <TransactionFeedProvider>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </TransactionFeedProvider>
         </AuthProvider>
       </QueryClientProvider>
     </WagmiProvider>

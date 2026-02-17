@@ -50,7 +50,7 @@ export default function SkillCard({ agent, onClick, isUpdated }: SkillCardProps)
         {agent.isStaked && agent.totalStakeEth > 0 && (
           <span className="skill-card-badge stake">
             <Gem className="badge-icon" />
-            {agent.totalStakeEth.toFixed(3)} ETH
+            {agent.totalStakeEth.toFixed(3)} MON
           </span>
         )}
         {agent.teeTier3Active && (

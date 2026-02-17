@@ -239,16 +239,16 @@ export default function SkillSlideOver({ agentId, onClose }: SkillSlideOverProps
                 <div className="staking-detail-grid">
                   <div className="staking-detail-item">
                     <span className="meta-label">Publisher Stake</span>
-                    <span className="meta-value">{staking.stake.stakeAmountEth.toFixed(4)} ETH</span>
+                    <span className="meta-value">{staking.stake.stakeAmountEth.toFixed(4)} MON</span>
                   </div>
                   <div className="staking-detail-item">
                     <span className="meta-label">Delegated</span>
-                    <span className="meta-value">{staking.stake.delegatedStakeEth.toFixed(4)} ETH</span>
+                    <span className="meta-value">{staking.stake.delegatedStakeEth.toFixed(4)} MON</span>
                   </div>
                   <div className="staking-detail-item">
                     <span className="meta-label">Total Stake</span>
                     <span className="meta-value" style={{ fontSize: '1.1rem' }}>
-                      {staking.stake.totalStakeEth.toFixed(4)} ETH
+                      {staking.stake.totalStakeEth.toFixed(4)} MON
                     </span>
                   </div>
                   <div className="staking-detail-item">
@@ -270,7 +270,7 @@ export default function SkillSlideOver({ agentId, onClose }: SkillSlideOverProps
                       <div key={i} className="slash-card" style={{ marginBottom: '6px' }}>
                         <div className="slash-card-header">
                           <span className="slash-reason" style={{ margin: 0 }}>{slash.reason}</span>
-                          <span className="slash-amount">-{slash.amountEth.toFixed(4)} ETH</span>
+                          <span className="slash-amount">-{slash.amountEth.toFixed(4)} MON</span>
                         </div>
                         <span className="slash-time">{new Date(slash.timestamp * 1000).toLocaleDateString()}</span>
                       </div>

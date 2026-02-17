@@ -1,4 +1,4 @@
-import { useState, useEffect, type CSSProperties } from 'react';
+import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import {
   useAccount,
   useWriteContract,
@@ -12,6 +12,7 @@ import {
   TRUST_STAKING_ADDRESS,
   TRUST_STAKING_ABI,
 } from '../config/contracts';
+import { useTransactionFeed, type TxActivityType } from '../context/TransactionFeedContext';
 
 type ActionMode = 'idle' | 'stake' | 'delegate' | 'unstake';
 
@@ -37,8 +38,11 @@ export default function StakeActions({
 
   const { address, isConnected, chainId } = useAccount();
   const { switchChain } = useSwitchChain();
+  const { addTransaction, updateTransaction } = useTransactionFeed();
 
   const agentIdHash = keccak256(toBytes(agentId));
+  const feedIdRef = useRef<string | null>(null);
+  const pendingTypeRef = useRef<TxActivityType | null>(null);
 
   const {
     writeContract,
@@ -60,6 +64,34 @@ export default function StakeActions({
     chainId: monadTestnet.id,
     query: { enabled: !!address },
   });
+
+  // Push transaction to the activity feed when a tx hash is received
+  useEffect(() => {
+    if (txHash && !feedIdRef.current && pendingTypeRef.current) {
+      feedIdRef.current = addTransaction({
+        type: pendingTypeRef.current,
+        hash: txHash,
+        status: 'pending',
+        from: address,
+      });
+    }
+  }, [txHash, address, addTransaction]);
+
+  // Update the feed notification when the transaction is confirmed
+  useEffect(() => {
+    if (isConfirmed && feedIdRef.current) {
+      updateTransaction(feedIdRef.current, { status: 'confirmed' });
+      feedIdRef.current = null;
+    }
+  }, [isConfirmed, updateTransaction]);
+
+  // Update on error
+  useEffect(() => {
+    if (writeError && feedIdRef.current) {
+      updateTransaction(feedIdRef.current, { status: 'failed' });
+      feedIdRef.current = null;
+    }
+  }, [writeError, updateTransaction]);
 
   // Refresh parent staking data after confirmation
   useEffect(() => {
@@ -121,6 +153,16 @@ export default function StakeActions({
     const val = Number(amount);
     if (!amount || isNaN(val) || val <= 0) return;
 
+    feedIdRef.current = null;
+    pendingTypeRef.current =
+      mode === 'stake'
+        ? isStaked
+          ? 'Add Stake'
+          : 'Stake'
+        : mode === 'delegate'
+          ? 'Delegate'
+          : 'Unstake';
+
     if (mode === 'stake') {
       writeContract({
         address: TRUST_STAKING_ADDRESS,
@@ -151,6 +193,8 @@ export default function StakeActions({
     setMode('idle');
     setAmount('');
     reset();
+    feedIdRef.current = null;
+    pendingTypeRef.current = null;
   };
 
   /* ─── Idle: show action buttons ──────────────────────── */
@@ -165,7 +209,7 @@ export default function StakeActions({
               setMode('stake');
             }}
           >
-            {isStaked ? 'Add Stake' : 'Stake ETH'}
+            {isStaked ? 'Add Stake' : 'Stake MON'}
           </button>
           {isStaked && (
             <button
@@ -195,19 +239,21 @@ export default function StakeActions({
           <div className="stake-unbonding-info">
             <span className="unbonding-label">Pending Unbonding:</span>
             <span className="unbonding-amount">
-              {Number(unbondingAmountEth).toFixed(4)} ETH
+              {Number(unbondingAmountEth).toFixed(4)} MON
             </span>
             {unbondingReady ? (
               <button
                 className="stake-btn complete-btn"
-                onClick={() =>
+                onClick={() => {
+                  feedIdRef.current = null;
+                  pendingTypeRef.current = 'Complete Unbonding';
                   writeContract({
                     address: TRUST_STAKING_ADDRESS,
                     abi: TRUST_STAKING_ABI,
                     functionName: 'completeUnbonding',
                     args: [agentIdHash],
-                  })
-                }
+                  });
+                }}
               >
                 Withdraw
               </button>
@@ -232,9 +278,9 @@ export default function StakeActions({
             {mode === 'stake'
               ? isStaked
                 ? 'Add Stake'
-                : 'Stake ETH'
+                : 'Stake MON'
               : mode === 'delegate'
-                ? 'Delegate ETH'
+                ? 'Delegate MON'
                 : 'Initiate Unstake'}
           </h4>
           <button className="stake-form-cancel" onClick={handleCancel}>
@@ -252,7 +298,7 @@ export default function StakeActions({
                 style={{ '--tier-color': tier.color } as CSSProperties}
                 onClick={() => setAmount(tier.min)}
               >
-                <span className="tier-min">{tier.min} ETH</span>
+                <span className="tier-min">{tier.min} MON</span>
                 <span className="tier-label-text">{tier.label}</span>
               </div>
             ))}
@@ -272,7 +318,7 @@ export default function StakeActions({
             step="0.01"
             min="0"
           />
-          <span className="stake-input-suffix">ETH</span>
+          <span className="stake-input-suffix">MON</span>
         </div>
 
         {/* Unstake cooldown warning */}
