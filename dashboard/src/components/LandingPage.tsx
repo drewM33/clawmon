@@ -55,8 +55,9 @@ export default function LandingPage() {
           className="relative z-10 text-[2.8rem] leading-[1.15] font-extrabold tracking-[-0.03em] max-w-2xl"
           style={{ color: 'var(--color-text-primary)' }}
         >
-          Trust scores for AI agent skills,{' '}
-          <span style={{ color: 'var(--color-success)' }}>attack-resistant</span>
+          Trust scores for AI skills.
+          <br />
+          <span style={{ color: 'var(--color-success)' }}>AI skills underwritten.</span>
         </motion.h1>
 
         <motion.p
@@ -66,8 +67,8 @@ export default function LandingPage() {
           className="relative z-10 mt-5 text-base max-w-xl leading-relaxed"
           style={{ color: 'var(--color-text-secondary)' }}
         >
-          Cryptographic reputation that catches sybil rings, punishes bad actors
-          economically, and lets good skills prove themselves on-chain.
+          Verified on-chain reputation backed by x402 payment receipts, ERC-8004
+          agentic identity, and the highest throughput blockchain in the universe.
         </motion.p>
 
         <motion.div
@@ -118,7 +119,7 @@ export default function LandingPage() {
             { value: verifiedCount ?? '...', label: 'Verified Skills' },
             { value: stats?.totalFeedback?.toLocaleString() ?? '...', label: 'Feedback Entries' },
             { value: stats?.sybilClustersDetected ?? '...', label: 'Sybil Rings Caught' },
-            { value: stakingStats ? `${stakingStats.totalStakedEth.toFixed(1)} ETH` : '...', label: 'Total Staked' },
+            { value: stakingStats ? `${stakingStats.totalStakedEth.toFixed(1)} MON` : '...', label: 'Total Staked' },
           ].map((stat, i) => (
             <motion.div
               key={stat.label}
