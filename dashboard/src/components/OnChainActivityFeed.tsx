@@ -7,6 +7,7 @@
  *
  * Each notification shows the activity type, a truncated tx hash
  * linking to the block explorer, and auto-dismisses after 10 seconds.
+ * The component is completely hidden when there are no transactions.
  */
 
 import { useEffect, useRef, useCallback } from 'react';
@@ -19,7 +20,7 @@ const AUTO_DISMISS_MS = 10_000;
 const EXPLORER_BASE = 'https://testnet.monadexplorer.com/tx/';
 
 function truncateHash(hash: string): string {
-  if (!hash || hash.length < 14) return hash;
+  if (!hash || hash.length < 14) return hash || '...';
   return `${hash.slice(0, 6)}...${hash.slice(-4)}`;
 }
 
@@ -48,6 +49,8 @@ function ActivityItem({
     return () => clearTimeout(timerRef.current);
   }, [tx.id, onDismiss]);
 
+  const hasHash = tx.hash && tx.hash.length > 0;
+
   return (
     <motion.div
       layout
@@ -61,16 +64,22 @@ function ActivityItem({
         <StatusIcon status={tx.status} />
         <div className="activity-item-info">
           <span className="activity-type">{tx.type}</span>
-          <a
-            href={`${EXPLORER_BASE}${tx.hash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="activity-hash"
-            title={tx.hash}
-          >
-            {truncateHash(tx.hash)}
-            <ExternalLink className="activity-link-icon" />
-          </a>
+          {hasHash ? (
+            <a
+              href={`${EXPLORER_BASE}${tx.hash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="activity-hash"
+              title={tx.hash}
+            >
+              {truncateHash(tx.hash)}
+              <ExternalLink className="activity-link-icon" />
+            </a>
+          ) : (
+            <span className="activity-hash">
+              {tx.status === 'pending' ? 'Awaiting hash...' : 'No hash'}
+            </span>
+          )}
         </div>
       </div>
       <button
@@ -104,30 +113,28 @@ export default function OnChainActivityFeed() {
   // Listen for real staking events from the WebSocket (network-wide)
   useWSEvent('staking:event', (event) => {
     const p = event.payload;
-    if (!p?.transactionHash) return;
+    if (!p) return;
 
     const type =
-      p.eventName === 'AgentStaked'
+      p.eventType === 'stake'
         ? 'Stake'
-        : p.eventName === 'StakeIncreased'
-          ? 'Add Stake'
-          : p.eventName === 'Delegated'
-            ? 'Delegate'
-            : p.eventName === 'UnbondingInitiated'
-              ? 'Unstake'
-              : p.eventName === 'UnbondingCompleted'
-                ? 'Complete Unbonding'
-                : p.eventName === 'Slashed'
-                  ? 'Slash'
-                  : 'Staking Event';
+        : p.eventType === 'delegate'
+          ? 'Delegate'
+          : p.eventType === 'unstake'
+            ? 'Unstake'
+            : p.eventType === 'slash'
+              ? 'Slash'
+              : 'Staking Event';
 
     addTransaction({
       type,
-      hash: p.transactionHash,
+      hash: p.transactionHash || '',
       status: 'confirmed',
-      from: p.args?.publisher || p.args?.user || p.args?.staker,
     });
   });
+
+  // Don't render anything when there are no transactions
+  if (transactions.length === 0) return null;
 
   return (
     <div className="activity-feed-container">
