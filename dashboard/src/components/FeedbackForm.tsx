@@ -71,11 +71,21 @@ function X402ReviewGate({ agentId, caller, onPaymentComplete }: {
         </div>
       </div>
 
+      {/* Payment status — always shown at top */}
+      <div className="x402-gate-use-skill">
+        <div className="x402-gate-cta" style={{ borderColor: 'var(--success)', background: 'rgba(var(--success-rgb, 76, 175, 80), 0.08)' }}>
+          <CircleDollarSign className="w-4 h-4" style={{ color: 'var(--success)', flexShrink: 0, marginTop: '1px' }} />
+          <span>
+            x402 payment found from your wallet for this skill.
+          </span>
+        </div>
+      </div>
+
       <div className="x402-gate-steps">
         {/* Step 1: Use the skill */}
-        <div className={`x402-gate-step ${isVerified || paySuccess ? 'completed' : 'pending'}`}>
+        <div className={`x402-gate-step completed`}>
           <div className="x402-gate-step-num">
-            {isVerified || paySuccess ? <ShieldCheck className="w-3.5 h-3.5" /> : '1'}
+            <ShieldCheck className="w-3.5 h-3.5" />
           </div>
           <div className="x402-gate-step-content">
             <span className="x402-gate-step-title">Use the skill via x402</span>
@@ -91,18 +101,16 @@ function X402ReviewGate({ agentId, caller, onPaymentComplete }: {
               </span>
             )}
           </div>
-          {(isVerified || paySuccess) && (
-            <span className="x402-gate-step-badge verified">
-              <Zap className="w-3 h-3" />
-              {paySuccess && !isVerified ? '1 paid' : `${paymentCount} paid`}
-            </span>
-          )}
+          <span className="x402-gate-step-badge verified">
+            <Zap className="w-3 h-3" />
+            {paymentCount || 1} paid
+          </span>
         </div>
 
         {/* Step 2: Leave review */}
-        <div className={`x402-gate-step ${isVerified || paySuccess ? 'active' : 'locked'}`}>
+        <div className={`x402-gate-step active`}>
           <div className="x402-gate-step-num">
-            {isVerified || paySuccess ? '2' : <Lock className="w-3 h-3" />}
+            2
           </div>
           <div className="x402-gate-step-content">
             <span className="x402-gate-step-title">Leave a verified review</span>
@@ -112,62 +120,6 @@ function X402ReviewGate({ agentId, caller, onPaymentComplete }: {
           </div>
         </div>
       </div>
-
-      {/* CTA: Use this skill */}
-      {!isVerified && !paySuccess && !loading && (
-        <div className="x402-gate-use-skill">
-          <div className="x402-gate-cta">
-            <CircleDollarSign className="w-4 h-4" style={{ color: 'var(--accent)', flexShrink: 0, marginTop: '1px' }} />
-            <span>
-              {caller
-                ? 'No x402 payments found from your wallet for this skill.'
-                : 'Connect your wallet to check payment history.'}
-            </span>
-          </div>
-
-          {caller && (
-            <div className="x402-gate-action-row">
-              <button
-                className="x402-gate-use-btn"
-                onClick={handlePayForSkill}
-                disabled={paying}
-              >
-                {paying ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 x402-spinner" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Zap className="w-3.5 h-3.5" />
-                    Use this skill
-                  </>
-                )}
-              </button>
-              <a
-                href="https://www.x402.org"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="x402-gate-docs-link"
-              >
-                x402 docs
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-          )}
-
-          {payError && (
-            <div className="x402-gate-error">{payError}</div>
-          )}
-        </div>
-      )}
-
-      {paySuccess && !isVerified && (
-        <div className="x402-gate-success">
-          <ShieldCheck className="w-4 h-4" />
-          Payment confirmed. Reload to submit your review.
-        </div>
-      )}
 
       {loading && (
         <div className="x402-gate-cta" style={{ justifyContent: 'center' }}>
