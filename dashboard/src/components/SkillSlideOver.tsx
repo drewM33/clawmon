@@ -125,6 +125,11 @@ export default function SkillSlideOver({ agentId, onClose }: SkillSlideOverProps
             </p>
           </div>
 
+          {/* Feedback Form — x402 verification */}
+          {agent.feedbackAuthPolicy === 'open' && (
+            <FeedbackForm agentId={agent.name} />
+          )}
+
           {/* Score Comparison */}
           <div className="slideover-section">
             <h3>Score Breakdown</h3>
@@ -362,10 +367,6 @@ export default function SkillSlideOver({ agentId, onClose }: SkillSlideOverProps
             </div>
           </div>
 
-          {/* Feedback Form */}
-          {agent.feedbackAuthPolicy === 'open' && (
-            <FeedbackForm agentId={agent.name} />
-          )}
         </div>
       </div>
     </>
