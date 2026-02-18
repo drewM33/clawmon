@@ -62,15 +62,16 @@ export default function StakeActions({
     functionName: 'getAgentStake',
     args: [agentIdHash],
     chainId: monadTestnet.id,
-    query: { enabled: isStaked },
+    query: { enabled: true },
   });
 
   const stakeRecord = stakeData as
     | readonly [string, bigint, bigint, bigint, bigint, bigint, boolean, number]
     | undefined;
+  const onChainActive = stakeRecord?.[6] ?? false;
   const onChainPublisher = stakeRecord?.[0];
   const isPublisher =
-    !!address && !!onChainPublisher &&
+    !!address && !!onChainPublisher && onChainActive &&
     address.toLowerCase() === onChainPublisher.toLowerCase();
 
   // Read pending unbonding for connected user
@@ -174,15 +175,17 @@ export default function StakeActions({
     feedIdRef.current = null;
 
     if (mode === 'stake') {
-      // If already staked by someone else, silently delegate instead
-      const useDelegate = isStaked && !isPublisher;
-      const functionName = !isStaked
+      // Use on-chain active status to pick the right contract function:
+      // - Not active on-chain → stakeAgent (first stake)
+      // - Active + we're publisher → increaseStake
+      // - Active + someone else is publisher → delegate
+      const functionName = !onChainActive
         ? 'stakeAgent'
         : isPublisher
           ? 'increaseStake'
           : 'delegate';
 
-      pendingTypeRef.current = useDelegate ? 'Delegate' : isStaked ? 'Add Stake' : 'Stake';
+      pendingTypeRef.current = !onChainActive ? 'Stake' : isPublisher ? 'Add Stake' : 'Delegate';
 
       writeContract({
         address: TRUST_STAKING_ADDRESS,
