@@ -83,7 +83,7 @@ export default function SkillsPage() {
       <section className="hero">
         <span className="hero-badge">ERC-8004 Trust Registry</span>
         <h1 className="hero-title">
-          Verified MCP Skills
+          Underwritten skill .md's
         </h1>
         <p className="hero-subtitle">
           Browse trust-scored skills with attack-resistant reputation.
