@@ -55,6 +55,24 @@ export default function StakeActions({
   const { isLoading: isConfirming, isSuccess: isConfirmed } =
     useWaitForTransactionReceipt({ hash: txHash });
 
+  // Read the agent's on-chain stake data to check publisher
+  const { data: stakeData } = useReadContract({
+    address: TRUST_STAKING_ADDRESS,
+    abi: TRUST_STAKING_ABI,
+    functionName: 'getAgentStake',
+    args: [agentIdHash],
+    chainId: monadTestnet.id,
+    query: { enabled: isStaked },
+  });
+
+  const stakeRecord = stakeData as
+    | readonly [string, bigint, bigint, bigint, bigint, bigint, boolean, number]
+    | undefined;
+  const onChainPublisher = stakeRecord?.[0];
+  const isPublisher =
+    !!address && !!onChainPublisher &&
+    address.toLowerCase() === onChainPublisher.toLowerCase();
+
   // Read pending unbonding for connected user
   const { data: unbondingData } = useReadContract({
     address: TRUST_STAKING_ADDRESS,
@@ -154,24 +172,27 @@ export default function StakeActions({
     if (!amount || isNaN(val) || val <= 0) return;
 
     feedIdRef.current = null;
-    pendingTypeRef.current =
-      mode === 'stake'
-        ? isStaked
-          ? 'Add Stake'
-          : 'Stake'
-        : mode === 'delegate'
-          ? 'Delegate'
-          : 'Unstake';
 
     if (mode === 'stake') {
+      // If already staked by someone else, silently delegate instead
+      const useDelegate = isStaked && !isPublisher;
+      const functionName = !isStaked
+        ? 'stakeAgent'
+        : isPublisher
+          ? 'increaseStake'
+          : 'delegate';
+
+      pendingTypeRef.current = useDelegate ? 'Delegate' : isStaked ? 'Add Stake' : 'Stake';
+
       writeContract({
         address: TRUST_STAKING_ADDRESS,
         abi: TRUST_STAKING_ABI,
-        functionName: isStaked ? 'increaseStake' : 'stakeAgent',
+        functionName,
         args: [agentIdHash],
         value: parseEther(amount),
       });
     } else if (mode === 'delegate') {
+      pendingTypeRef.current = 'Delegate';
       writeContract({
         address: TRUST_STAKING_ADDRESS,
         abi: TRUST_STAKING_ABI,
@@ -180,6 +201,7 @@ export default function StakeActions({
         value: parseEther(amount),
       });
     } else if (mode === 'unstake') {
+      pendingTypeRef.current = 'Unstake';
       writeContract({
         address: TRUST_STAKING_ADDRESS,
         abi: TRUST_STAKING_ABI,
@@ -209,7 +231,7 @@ export default function StakeActions({
               setMode('stake');
             }}
           >
-            {isStaked ? 'Add Stake' : 'Stake MON'}
+            {!isStaked ? 'Stake MON' : isPublisher ? 'Add Stake' : 'Stake MON'}
           </button>
           {isStaked && (
             <button
@@ -335,7 +357,10 @@ export default function StakeActions({
             {(writeError as Error).message?.includes('User rejected') ||
             (writeError as Error).message?.includes('rejected')
               ? 'Transaction rejected by user'
-              : (writeError as Error).message?.slice(0, 140)}
+              : (writeError as Error).message?.includes('exceeds defined limit') ||
+                (writeError as Error).message?.includes('reverted')
+                ? 'Transaction would fail on-chain. The agent may already be staked or you may lack permission.'
+                : (writeError as Error).message?.slice(0, 140)}
           </div>
         )}
         {isPending && (
