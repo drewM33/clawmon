@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { X, AlertTriangle, Users, ShieldCheck, Link2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { X, AlertTriangle, Users, ShieldCheck, Link2, Pencil } from 'lucide-react';
 import { useAgentDetail, useAgentStaking, useAgentAttestation } from '../hooks/useApi';
 import TierBadge from './TierBadge';
 import FeedbackForm from './FeedbackForm';
@@ -82,7 +82,13 @@ export default function SkillSlideOver({ agentId, onClose }: SkillSlideOverProps
     1,
   );
 
-  const scoreDiff = agent.naiveScore - agent.hardenedScore;
+  const [editingScores, setEditingScores] = useState(false);
+  const [customNaive, setCustomNaive] = useState(agent.naiveScore);
+  const [customHardened, setCustomHardened] = useState(agent.hardenedScore);
+
+  const displayNaive = editingScores ? customNaive : agent.naiveScore;
+  const displayHardened = editingScores ? customHardened : agent.hardenedScore;
+  const scoreDiff = displayNaive - displayHardened;
   const hardenedColor = TIER_COLORS[agent.hardenedTier];
   const naiveColor = TIER_COLORS[agent.naiveTier];
 
@@ -132,22 +138,97 @@ export default function SkillSlideOver({ agentId, onClose }: SkillSlideOverProps
 
           {/* Score Comparison */}
           <div className="slideover-section">
-            <h3>Score Breakdown</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3>Score Breakdown</h3>
+              <button
+                onClick={() => {
+                  if (!editingScores) {
+                    setCustomNaive(agent.naiveScore);
+                    setCustomHardened(agent.hardenedScore);
+                  }
+                  setEditingScores(!editingScores);
+                }}
+                style={{
+                  background: editingScores ? 'var(--accent)' : 'transparent',
+                  border: `1px solid ${editingScores ? 'var(--accent)' : 'var(--border)'}`,
+                  color: editingScores ? '#000' : 'var(--text-muted)',
+                  borderRadius: '6px',
+                  padding: '4px 10px',
+                  fontSize: '0.72rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
+                <Pencil className="w-3 h-3" />
+                {editingScores ? 'Done' : 'Edit Scores'}
+              </button>
+            </div>
+
+            {editingScores && (
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Naive Score</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value={customNaive}
+                    onChange={(e) => setCustomNaive(Number(e.target.value))}
+                    style={{
+                      width: '100%',
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      padding: '6px 10px',
+                      color: 'var(--text)',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: '0.85rem',
+                    }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Hardened Score</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value={customHardened}
+                    onChange={(e) => setCustomHardened(Number(e.target.value))}
+                    style={{
+                      width: '100%',
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      padding: '6px 10px',
+                      color: 'var(--text)',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: '0.85rem',
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="score-bars">
               <div className="score-row">
                 <span className="score-label">Naive Score</span>
                 <div className="score-bar-track">
-                  <div className="score-bar-fill naive" style={{ width: `${agent.naiveScore}%`, backgroundColor: naiveColor }} />
+                  <div className="score-bar-fill naive" style={{ width: `${displayNaive}%`, backgroundColor: naiveColor }} />
                 </div>
-                <span className="score-number">{agent.naiveScore.toFixed(1)}</span>
+                <span className="score-number">{displayNaive.toFixed(1)}</span>
                 <TierBadge tier={agent.naiveTier} size="sm" />
               </div>
               <div className="score-row">
                 <span className="score-label">Hardened Score</span>
                 <div className="score-bar-track">
-                  <div className="score-bar-fill hardened" style={{ width: `${agent.hardenedScore}%`, backgroundColor: hardenedColor }} />
+                  <div className="score-bar-fill hardened" style={{ width: `${displayHardened}%`, backgroundColor: hardenedColor }} />
                 </div>
-                <span className="score-number">{agent.hardenedScore.toFixed(1)}</span>
+                <span className="score-number">{displayHardened.toFixed(1)}</span>
                 <TierBadge tier={agent.hardenedTier} size="sm" />
               </div>
             </div>
