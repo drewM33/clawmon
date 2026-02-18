@@ -3,7 +3,7 @@
  * Deployed on Monad testnet.
  */
 
-export const TRUST_STAKING_ADDRESS = '0xDf54a2EeDc398dD939501E780e5F818F7C445b06' as const;
+export const TRUST_STAKING_ADDRESS = '0x2Dd0946Be048e7B61E2995bdDE97860427e74562' as const;
 
 export const TRUST_STAKING_ABI = [
   {
