@@ -1,4 +1,4 @@
-# Trusted ClawMon
+# ClawMon
 
 > A curated, attack-resistant, crypto-economically secured registry overlay for MCP skills, built on ERC-8004.
 
