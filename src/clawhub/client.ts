@@ -21,7 +21,8 @@ import type { ClawHubSkill, ClawHubOwner } from './types.js';
 
 const execFileAsync = promisify(execFile);
 
-const CLI_TIMEOUT_MS = 30_000;
+// Higher timeout for Render/CI — ClawHub API can be slow from cloud datacenters
+const CLI_TIMEOUT_MS = 90_000;
 
 const EXPLORE_SORT_ORDERS = [
   'newest',
@@ -76,24 +77,35 @@ const SEARCH_CATEGORIES = [
 
 /**
  * Resolve the path to the clawhub CLI binary.
- * Checks: global PATH first, then local node_modules/.bin/ (for Render / CI).
+ * Uses Node's createRequire first (reliable on Render/CI), then path candidates.
  */
 export async function resolveCli(): Promise<string> {
-  const { resolve } = await import('node:path');
+  const { resolve, dirname } = await import('node:path');
   const { access } = await import('node:fs/promises');
 
-  // Check local node_modules/.bin/ first (most reliable in production)
-  const candidates = [
-    resolve(process.cwd(), 'node_modules/.bin/clawhub'),
-  ];
+  const candidates: string[] = [];
 
-  // Also check relative to compiled output location
+  // 1. createRequire — most reliable: uses Node's module resolution (works on Render regardless of cwd)
+  try {
+    const { createRequire } = await import('node:module');
+    const req = createRequire(import.meta.url);
+    const pkgPath = req.resolve('clawhub/package.json');
+    const cliPath = resolve(dirname(pkgPath), 'bin/clawdhub.js');
+    candidates.push(cliPath);
+  } catch {
+    // clawhub not installed or resolve failed
+  }
+
+  // 2. process.cwd() — project root (when start command runs from repo root)
+  candidates.push(resolve(process.cwd(), 'node_modules/.bin/clawhub'));
+  candidates.push(resolve(process.cwd(), 'node_modules/clawhub/bin/clawdhub.js'));
+
+  // 3. Relative to compiled output (dist/src/clawhub/ -> project root is ../../../)
   try {
     const { fileURLToPath } = await import('node:url');
-    const { dirname } = await import('node:path');
     const thisDir = dirname(fileURLToPath(import.meta.url));
-    candidates.push(resolve(thisDir, '../../node_modules/.bin/clawhub'));
     candidates.push(resolve(thisDir, '../../../node_modules/.bin/clawhub'));
+    candidates.push(resolve(thisDir, '../../../node_modules/clawhub/bin/clawdhub.js'));
   } catch {
     // import.meta.url may not resolve in all environments
   }
@@ -160,17 +172,18 @@ function exploreItemToSkill(item: ExploreItem): ClawHubSkill {
 /**
  * Run `clawhub explore --json` with a given sort order.
  * Paginates using nextCursor to fetch beyond the first 200 results.
+ * Retries once on failure (common on Render's network).
  */
 async function exploreSort(
   cliPath: string,
   sort: string,
-  maxPages = 3,
+  maxPages = 5,
 ): Promise<ClawHubSkill[]> {
   const all: ClawHubSkill[] = [];
   let cursor: string | undefined;
 
   for (let page = 0; page < maxPages; page++) {
-    try {
+    const run = async (): Promise<string | undefined> => {
       const args = ['explore', '--json', '--limit', '200', '--sort', sort];
       if (cursor) args.push('--cursor', cursor);
 
@@ -180,24 +193,34 @@ async function exploreSort(
       });
 
       const jsonStart = stdout.indexOf('{');
-      if (jsonStart === -1) break;
+      if (jsonStart === -1) return undefined;
 
       const data: ExploreResponse = JSON.parse(stdout.slice(jsonStart));
-      if (!Array.isArray(data.items) || data.items.length === 0) break;
+      if (!Array.isArray(data.items) || data.items.length === 0) return undefined;
 
       const skills = data.items
         .filter((item) => item && typeof item.slug === 'string')
         .map(exploreItemToSkill);
       all.push(...skills);
 
-      if (!data.nextCursor) break;
-      cursor = data.nextCursor;
+      return data.nextCursor ?? undefined;
+    };
+
+    try {
+      cursor = await run();
+      if (!cursor) break;
     } catch (err) {
-      console.error(
-        `  [clawhub] explore --sort ${sort} page ${page} failed:`,
-        err instanceof Error ? err.message : err,
-      );
-      break;
+      try {
+        await new Promise((r) => setTimeout(r, 2000));
+        cursor = await run();
+        if (!cursor) break;
+      } catch (retryErr) {
+        console.error(
+          `  [clawhub] explore --sort ${sort} page ${page} failed (after retry):`,
+          retryErr instanceof Error ? retryErr.message : retryErr,
+        );
+        break;
+      }
     }
   }
   return all;
@@ -235,13 +258,14 @@ function parseSearchLine(line: string): ClawHubSkill | null {
 
 /**
  * Run `clawhub search <query>` and parse the text output.
+ * Retries once on failure (common on Render's network).
  */
 async function searchQuery(
   cliPath: string,
   query: string,
   limit: number,
 ): Promise<ClawHubSkill[]> {
-  try {
+  const run = async (): Promise<ClawHubSkill[]> => {
     const { stdout } = await execFileAsync(
       cliPath,
       ['search', query, '--limit', String(limit)],
@@ -257,12 +281,21 @@ async function searchQuery(
       }
     }
     return skills;
+  };
+
+  try {
+    return await run();
   } catch (err) {
-    console.error(
-      `  [clawhub] search "${query}" failed:`,
-      err instanceof Error ? err.message : err,
-    );
-    return [];
+    try {
+      await new Promise((r) => setTimeout(r, 2000));
+      return await run();
+    } catch (retryErr) {
+      console.error(
+        `  [clawhub] search "${query}" failed (after retry):`,
+        retryErr instanceof Error ? retryErr.message : retryErr,
+      );
+      return [];
+    }
   }
 }
 
