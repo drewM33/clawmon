@@ -79,26 +79,24 @@ const SEARCH_CATEGORIES = [
  * Checks: global PATH first, then local node_modules/.bin/ (for Render / CI).
  */
 export async function resolveCli(): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync('which', ['clawhub'], {
-      timeout: 5_000,
-    });
-    const path = stdout.trim();
-    if (path) return path;
-  } catch {
-    // not found on PATH
-  }
-
-  // Check local node_modules/.bin/ (installed as project dependency)
-  const { fileURLToPath } = await import('node:url');
-  const { dirname, resolve } = await import('node:path');
+  const { resolve } = await import('node:path');
   const { access } = await import('node:fs/promises');
 
-  const thisDir = dirname(fileURLToPath(import.meta.url));
+  // Check local node_modules/.bin/ first (most reliable in production)
   const candidates = [
-    resolve(thisDir, '../../node_modules/.bin/clawhub'),
     resolve(process.cwd(), 'node_modules/.bin/clawhub'),
   ];
+
+  // Also check relative to compiled output location
+  try {
+    const { fileURLToPath } = await import('node:url');
+    const { dirname } = await import('node:path');
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    candidates.push(resolve(thisDir, '../../node_modules/.bin/clawhub'));
+    candidates.push(resolve(thisDir, '../../../node_modules/.bin/clawhub'));
+  } catch {
+    // import.meta.url may not resolve in all environments
+  }
 
   for (const candidate of candidates) {
     try {
@@ -107,6 +105,17 @@ export async function resolveCli(): Promise<string> {
     } catch {
       // not at this path
     }
+  }
+
+  // Fall back to PATH lookup
+  try {
+    const { stdout } = await execFileAsync('which', ['clawhub'], {
+      timeout: 5_000,
+    });
+    const path = stdout.trim();
+    if (path) return path;
+  } catch {
+    // not found on PATH
   }
 
   throw new Error('clawhub CLI not found. Install with: npm i clawhub');
