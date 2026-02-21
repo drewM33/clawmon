@@ -9,20 +9,20 @@ import GovernancePanel from './GovernancePanel';
 type ProtocolTab = 'staking' | 'attestations' | 'tee' | 'insurance' | 'payments' | 'governance';
 
 const TABS: { key: ProtocolTab; label: string; desc: string }[] = [
-  { key: 'staking', label: 'Staking', desc: 'Economic trust via collateral' },
-  { key: 'attestations', label: 'Attestations', desc: 'Cross-chain score bridging' },
-  { key: 'tee', label: 'TEE', desc: 'Hardware-verified execution' },
-  { key: 'insurance', label: 'Insurance', desc: 'Slash fund redistribution' },
-  { key: 'payments', label: 'x402 Payments', desc: 'Micropayment revenue' },
-  { key: 'governance', label: 'Governance', desc: 'On-chain parameter voting' },
+  { key: 'staking', label: 'Staking', desc: 'Collateral bonds backing skill trust' },
+  { key: 'attestations', label: 'Attestations', desc: 'Cross-chain score propagation' },
+  { key: 'tee', label: 'TEE', desc: 'Hardware-attested execution proofs' },
+  { key: 'insurance', label: 'Insurance', desc: 'Automated compensation from slash funds' },
+  { key: 'payments', label: 'x402 Payments', desc: 'Agent-to-agent micropayments' },
+  { key: 'governance', label: 'Governance', desc: 'On-chain parameter governance' },
 ];
 
 export default function ProtocolDetails() {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<ProtocolTab>('staking');
 
   return (
-    <section className="protocol-details">
+    <section id="staking" className="protocol-details">
       <button
         className="protocol-toggle"
         onClick={() => setIsOpen(!isOpen)}
@@ -31,9 +31,9 @@ export default function ProtocolDetails() {
         <div className="protocol-toggle-left">
           <span className={`protocol-chevron ${isOpen ? 'open' : ''}`}>&#9662;</span>
           <div>
-            <span className="protocol-toggle-title">Protocol Details</span>
+            <span className="protocol-toggle-title">Protocol Internals</span>
             <span className="protocol-toggle-subtitle">
-              Staking, Attestations, TEE, Insurance, Governance &amp; x402
+              Staking, Attestations, TEE, Insurance, x402 &amp; Governance
             </span>
           </div>
         </div>

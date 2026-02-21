@@ -23,7 +23,8 @@ export type TxActivityType =
   | 'Slash'
   | 'Register Agent'
   | 'Attestation'
-  | 'Staking Event';
+  | 'Staking Event'
+  | 'Pay for Skill';
 
 export type TxStatus = 'pending' | 'confirmed' | 'failed';
 

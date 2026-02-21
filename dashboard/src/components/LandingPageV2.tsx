@@ -64,21 +64,6 @@ export default function LandingPageV2() {
           }}
         />
 
-        <motion.span
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.3 }}
-          className="relative z-10 inline-flex items-center gap-2 px-4 py-1.5 rounded-full border text-xs font-semibold tracking-wide mb-8"
-          style={{
-            background: 'var(--color-accent-muted)',
-            borderColor: 'rgba(196, 92, 58, 0.25)',
-            color: 'var(--color-accent)',
-          }}
-        >
-          <Shield className="w-3.5 h-3.5" />
-          ERC-8004 + Monad Testnet
-        </motion.span>
-
         <motion.h1
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -213,14 +198,14 @@ export default function LandingPageV2() {
                 className="font-mono text-2xl font-bold"
                 style={{ color: 'var(--color-danger)' }}
               >
-                5,700+
+                9,000+
               </div>
               <div
                 className="text-sm mt-1"
                 style={{ color: 'var(--color-text-secondary)' }}
               >
-                MCP skills in the ecosystem.{' '}
-                <span className="font-semibold" style={{ color: 'var(--color-danger)' }}>230+ confirmed malicious.</span>{' '}
+                ClawHub skills in the ecosystem, but{' '}
+                <span className="font-semibold" style={{ color: 'var(--color-danger)' }}>up to 20% are malicious</span>.{' '}
                 No recourse for victims.
               </div>
             </div>

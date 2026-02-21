@@ -28,7 +28,7 @@ export default function App() {
             <Globe className="nav-link-icon" />
             Overview
           </NavLink>
-          <NavLink to="/skills" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+          <NavLink to="/skills" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
             <Radar className="nav-link-icon" />
             Skills
           </NavLink>

@@ -13,7 +13,7 @@ import type { TrustTier } from '../scoring/types.js';
 
 /** Fee split configuration for x402 payments */
 export interface PaymentConfig {
-  /** Base price per skill invocation in ETH */
+  /** Base price per skill invocation in MON */
   skillPricePerCall: number;
   /** Publisher share (0.80 = 80%) */
   publisherShare: number;
@@ -25,7 +25,7 @@ export interface PaymentConfig {
 
 /** Default payment configuration */
 export const DEFAULT_PAYMENT_CONFIG: PaymentConfig = {
-  skillPricePerCall: 0.001,    // 0.001 ETH base price per call
+  skillPricePerCall: 0.001,    // 0.001 MON base price per call
   publisherShare: 0.80,
   protocolShare: 0.10,
   insuranceShare: 0.10,
@@ -98,13 +98,13 @@ export interface x402Receipt {
   caller: string;
   /** Publisher address that received their share */
   publisher: string;
-  /** Total amount paid (ETH) */
+  /** Total amount paid (MON) */
   amount: number;
-  /** Publisher's payout (ETH) */
+  /** Publisher's payout (MON) */
   publisherPayout: number;
-  /** Protocol treasury's share (ETH) */
+  /** Protocol treasury's share (MON) */
   protocolPayout: number;
-  /** Insurance pool's share (ETH) */
+  /** Insurance pool's share (MON) */
   insurancePayout: number;
   /** Trust tier at time of payment */
   trustTier: TrustTier;
@@ -112,6 +112,8 @@ export interface x402Receipt {
   effectivePrice: number;
   /** Unix timestamp (ms) */
   timestamp: number;
+  /** On-chain transaction hash (present for verified payments) */
+  txHash?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +216,7 @@ export interface PaymentTrustSignal {
   paymentVelocity: number;
   /** Unique callers (diversity of payers) */
   uniqueCallers: number;
-  /** Total revenue in ETH */
+  /** Total revenue in MON */
   totalRevenueEth: number;
   /** Computed trust weight from payment history (0.0 - 2.0) */
   paymentTrustWeight: number;
@@ -229,7 +231,7 @@ export const PAYWALL_CONSTANTS = {
   PROTOCOL_BPS: 1000,
   INSURANCE_BPS: 1000,
   TOTAL_BPS: 10000,
-  MIN_PAYMENT_WEI: '100000000000000',      // 0.0001 ETH
+  MIN_PAYMENT_WEI: '100000000000000',      // 0.0001 MON
   MIN_PAYMENT_ETH: 0.0001,
   PREMIUM_MULTIPLIER_BPS: 20000,           // 2.0x
   STANDARD_MULTIPLIER_BPS: 10000,          // 1.0x

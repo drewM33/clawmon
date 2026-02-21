@@ -8,6 +8,7 @@ import type {
   SlashRecord,
   StakingStats,
   AgentStakingDetail,
+  BoostStatus,
   AttestationOverviewItem,
   AttestationStats,
   AttestationDetail,
@@ -27,6 +28,8 @@ import type {
   ProposalDetail,
   GovernableParameter,
   ParameterCategory,
+  UserReputationResponse,
+  CuratorLeaderboardEntry,
 } from '../types';
 import { API_BASE } from '../config/env';
 
@@ -170,6 +173,21 @@ export function useAgentStaking(agentId: string | undefined) {
   }, [agentId, refetchCount]);
 
   return { data, loading, error, refetch };
+}
+
+export function useBoostOverview() {
+  const [data, setData] = useState<BoostStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchJson<BoostStatus[]>('/boost/overview')
+      .then(setData)
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return { data, loading, error };
 }
 
 // ---------------------------------------------------------------------------
@@ -523,6 +541,41 @@ export function useGovernanceParametersByCategory() {
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  return { data, loading, error };
+}
+
+// ---------------------------------------------------------------------------
+// Reputation Tier Hooks
+// ---------------------------------------------------------------------------
+
+export function useUserReputation(address: string | undefined) {
+  const [data, setData] = useState<UserReputationResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!address) { setLoading(false); return; }
+    fetchJson<UserReputationResponse>(`/reputation/${address}`)
+      .then(setData)
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [address]);
+
+  return { data, loading, error, setData };
+}
+
+export function useCuratorLeaderboard(limit = 50) {
+  const [data, setData] = useState<CuratorLeaderboardEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchJson<CuratorLeaderboardEntry[]>(`/reputation/leaderboard?limit=${limit}`)
+      .then(setData)
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [limit]);
 
   return { data, loading, error };
 }

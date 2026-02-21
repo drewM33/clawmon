@@ -1,31 +1,256 @@
-import { useEffect, useState } from 'react';
-import { X, AlertTriangle, Users, ShieldCheck, Link2, Pencil } from 'lucide-react';
-import { useAgentDetail, useAgentStaking, useAgentAttestation } from '../hooks/useApi';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { X, AlertTriangle, Users, Link2, Loader2, ShieldCheck, Coins, Gift } from 'lucide-react';
+import {
+  useAccount,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+  useSwitchChain,
+} from 'wagmi';
+import { useAgentDetail, useAgentStaking } from '../hooks/useApi';
+import { useAuth } from '../context/AuthContext';
+import { useTransactionFeed } from '../context/TransactionFeedContext';
+import { baseSepolia } from '../config/wagmi';
+import {
+  USDC_BASE_SEPOLIA_ADDRESS,
+  X402_PAY_TO,
+  X402_PRICE_USDC,
+  ERC20_ABI,
+} from '../config/contracts';
 import TierBadge from './TierBadge';
 import FeedbackForm from './FeedbackForm';
-import DemoVideoUpload from './DemoVideoUpload';
-import StakeActions from './StakeActions';
-import type { TrustTier, AttestationStatus } from '../types';
-import { TIER_COLORS, STAKE_TIER_COLORS, STAKE_TIER_LABELS, ATTESTATION_STATUS_COLORS, ATTESTATION_STATUS_LABELS } from '../types';
+import BoostModal from './BoostModal';
+
+import { API_BASE } from '../config/env';
 
 interface SkillSlideOverProps {
   agentId: string;
   onClose: () => void;
 }
 
-function formatAge(seconds: number): string {
-  if (seconds < 0) return '\u2014';
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  if (hours > 24) return `${Math.floor(hours / 24)}d ${hours % 24}h ago`;
-  if (hours > 0) return `${hours}h ${minutes}m ago`;
-  return `${minutes}m ago`;
+
+interface ExecutionProof {
+  proofMessage: string;
+  outputHash: string;
+  clawmonSignature: string;
+  signerAddress: string;
+  skillName: string;
+  timestamp: number;
+}
+
+type PayStatus = 'idle' | 'switching_chain' | 'awaiting_wallet' | 'confirming' | 'verifying' | 'done' | 'error';
+
+/**
+ * x402 payment button — follows the Coinbase x402 spec:
+ *   1. User's wallet transfers USDC on Base Sepolia to X402_PAY_TO
+ *   2. Tx confirms on-chain
+ *   3. Server records the payment + generates an execution proof
+ *
+ * See: https://docs.cdp.coinbase.com/x402/welcome
+ */
+function PayForSkillButton({ agentId, onProofGenerated }: {
+  agentId: string;
+  onProofGenerated: (proof: ExecutionProof) => void;
+}) {
+  const { address } = useAuth();
+  const { isConnected, chainId } = useAccount();
+  const { switchChain } = useSwitchChain();
+  const { addTransaction, updateTransaction } = useTransactionFeed();
+
+  const [status, setStatus] = useState<PayStatus>('idle');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [output, setOutput] = useState<unknown>(null);
+  const feedIdRef = useRef<string | null>(null);
+
+  const { writeContract, data: txHash, error: writeError, reset } = useWriteContract();
+  const { data: receipt } = useWaitForTransactionReceipt({ hash: txHash });
+
+  const priceDisplay = '$0.001 USDC';
+
+  // Step 1: Transfer USDC on Base Sepolia to ClawMon x402 recipient
+  const handlePay = useCallback(() => {
+    if (!isConnected || !address) return;
+    setErrorMsg(null);
+    reset();
+
+    if (chainId !== baseSepolia.id) {
+      setStatus('switching_chain');
+      switchChain({ chainId: baseSepolia.id });
+      return;
+    }
+
+    setStatus('awaiting_wallet');
+    writeContract({
+      address: USDC_BASE_SEPOLIA_ADDRESS,
+      abi: ERC20_ABI,
+      functionName: 'transfer',
+      args: [X402_PAY_TO, X402_PRICE_USDC],
+      chainId: baseSepolia.id,
+    });
+  }, [isConnected, address, chainId, switchChain, writeContract, reset]);
+
+  // Retry after chain switch
+  useEffect(() => {
+    if (status === 'switching_chain' && chainId === baseSepolia.id) {
+      setStatus('awaiting_wallet');
+      writeContract({
+        address: USDC_BASE_SEPOLIA_ADDRESS,
+        abi: ERC20_ABI,
+        functionName: 'transfer',
+        args: [X402_PAY_TO, X402_PRICE_USDC],
+        chainId: baseSepolia.id,
+      });
+    }
+  }, [chainId, status, writeContract]);
+
+  // Step 2: Tx submitted -> add to activity feed
+  useEffect(() => {
+    if (txHash && (status === 'awaiting_wallet' || status === 'switching_chain')) {
+      setStatus('confirming');
+      feedIdRef.current = addTransaction({
+        type: 'Pay for Skill',
+        hash: txHash,
+        status: 'pending',
+        from: address,
+      });
+    }
+  }, [txHash, status, addTransaction, address]);
+
+  // Step 3: Tx confirmed -> record usage on server + generate execution proof
+  useEffect(() => {
+    if (!receipt || !txHash || status !== 'confirming') return;
+
+    const verify = async () => {
+      setStatus('verifying');
+
+      if (feedIdRef.current) {
+        updateTransaction(feedIdRef.current, { status: 'confirmed' });
+      }
+
+      try {
+        // Record the x402 USDC payment with the server
+        const useRes = await fetch(`${API_BASE}/skills/use/${encodeURIComponent(agentId)}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'PAYMENT-SIGNATURE': txHash,
+          },
+          body: JSON.stringify({ caller: address }),
+        });
+        const useData = await useRes.json();
+        if (!useRes.ok) {
+          throw new Error(useData.error || 'Failed to record payment');
+        }
+
+        // Generate execution proof
+        const proveRes = await fetch(`${API_BASE}/skills/prove/${encodeURIComponent(agentId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ caller: address, paymentTxHash: txHash }),
+        });
+        const proveData = await proveRes.json();
+        if (!proveRes.ok) {
+          throw new Error(proveData.error || 'Execution proof generation failed');
+        }
+
+        setOutput(proveData.output);
+        setStatus('done');
+        if (proveData.executionReceipt) {
+          onProofGenerated(proveData.executionReceipt);
+        }
+      } catch (err: unknown) {
+        setErrorMsg(err instanceof Error ? err.message : 'Verification failed');
+        setStatus('error');
+      }
+    };
+
+    verify();
+  }, [receipt, txHash, status, agentId, address, updateTransaction, onProofGenerated]);
+
+  // Handle write errors
+  useEffect(() => {
+    if (writeError && (status === 'awaiting_wallet' || status === 'switching_chain')) {
+      const raw = writeError.message || '';
+      let msg: string;
+      if (raw.includes('User rejected') || raw.includes('user rejected')) {
+        msg = 'Transaction rejected';
+      } else if (raw.includes('insufficient') || raw.includes('exceeds balance')) {
+        msg = 'Insufficient USDC balance on Base Sepolia';
+      } else {
+        msg = raw.slice(0, 120) || 'Transaction failed';
+      }
+      setErrorMsg(msg);
+      setStatus('error');
+    }
+  }, [writeError, status]);
+
+  const statusText = (() => {
+    switch (status) {
+      case 'idle': return `Invoke skill — ${priceDisplay}`;
+      case 'switching_chain': return 'Switching to Base Sepolia...';
+      case 'awaiting_wallet': return 'Confirm USDC transfer...';
+      case 'confirming': return 'Confirming on Base Sepolia...';
+      case 'verifying': return 'Generating execution proof...';
+      case 'done': return 'Execution proof generated';
+      case 'error': return 'Payment failed — retry';
+      default: return `Invoke — ${priceDisplay}`;
+    }
+  })();
+
+  const isLoading = status === 'switching_chain' || status === 'awaiting_wallet' || status === 'confirming' || status === 'verifying';
+
+  return (
+    <div className="x402-protocol-link-wrap">
+      <button
+        className="x402-protocol-link"
+        onClick={status === 'done' || status === 'error' ? () => { setStatus('idle'); setErrorMsg(null); reset(); } : handlePay}
+        disabled={isLoading || !isConnected}
+      >
+        <span className="x402-protocol-badge">x402</span>
+        <span className="x402-protocol-text">{statusText}</span>
+        {isLoading ? (
+          <Loader2 className="x402-protocol-arrow animate-spin" />
+        ) : status === 'done' ? (
+          <ShieldCheck className="x402-protocol-arrow" style={{ color: 'var(--success)' }} />
+        ) : (
+          <Coins className="x402-protocol-arrow" />
+        )}
+      </button>
+
+      {txHash && (
+        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '6px', fontFamily: "'JetBrains Mono', monospace" }}>
+          tx:{' '}
+          <a
+            href={`https://sepolia.basescan.org/tx/${txHash}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: 'var(--accent)' }}
+          >
+            {txHash.slice(0, 10)}...{txHash.slice(-8)}
+          </a>
+        </div>
+      )}
+
+      {status === 'done' && output !== null && (
+        <pre className="x402-protocol-result">
+          {JSON.stringify(output, null, 2)}
+        </pre>
+      )}
+
+      {status === 'error' && errorMsg && (
+        <div className="x402-protocol-error">
+          <span>{errorMsg}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function SkillSlideOver({ agentId, onClose }: SkillSlideOverProps) {
   const { data: agent, loading, error } = useAgentDetail(agentId);
   const { data: staking, refetch: refetchStaking } = useAgentStaking(agentId);
-  const { data: attestation } = useAgentAttestation(agentId);
+
+  const [executionProof, setExecutionProof] = useState<ExecutionProof | null>(null);
+  const [showBoostModal, setShowBoostModal] = useState(false);
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -73,24 +298,7 @@ export default function SkillSlideOver({ agentId, onClose }: SkillSlideOverProps
     );
   }
 
-  const maxFlag = Math.max(
-    agent.mitigationFlags.sybilMutual,
-    agent.mitigationFlags.velocityBurst,
-    agent.mitigationFlags.temporalDecay,
-    agent.mitigationFlags.newSubmitter,
-    agent.mitigationFlags.anomalyBurst,
-    1,
-  );
 
-  const [editingScores, setEditingScores] = useState(false);
-  const [customNaive, setCustomNaive] = useState(agent.naiveScore);
-  const [customHardened, setCustomHardened] = useState(agent.hardenedScore);
-
-  const displayNaive = editingScores ? customNaive : agent.naiveScore;
-  const displayHardened = editingScores ? customHardened : agent.hardenedScore;
-  const scoreDiff = displayNaive - displayHardened;
-  const hardenedColor = TIER_COLORS[agent.hardenedTier];
-  const naiveColor = TIER_COLORS[agent.naiveTier];
 
   const sortedFb = [...agent.feedback]
     .filter(f => !f.revoked)
@@ -127,313 +335,96 @@ export default function SkillSlideOver({ agentId, onClose }: SkillSlideOverProps
             <span className="detail-publisher">by {agent.publisher} &middot; {agent.category}</span>
             <p className="detail-description">{agent.description}</p>
             <p className="detail-auth">
-              Feedback Auth: <span className="auth-open">{agent.feedbackAuthPolicy}</span>
+              Signal policy: <span className="auth-open">{agent.feedbackAuthPolicy}</span>
             </p>
+            <PayForSkillButton agentId={agent.agentId} onProofGenerated={setExecutionProof} />
           </div>
 
-          {/* Feedback Form — x402 verification */}
+          {/* On-chain ERC-8004 review */}
           {agent.feedbackAuthPolicy === 'open' && (
-            <FeedbackForm agentId={agent.name} />
+            <FeedbackForm
+              agentId={agent.agentId}
+              executionProofHash={executionProof?.proofMessage}
+            />
           )}
-
-          {/* Score Comparison */}
-          <div className="slideover-section">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3>Score Breakdown</h3>
-              <button
-                onClick={() => {
-                  if (!editingScores) {
-                    setCustomNaive(agent.naiveScore);
-                    setCustomHardened(agent.hardenedScore);
-                  }
-                  setEditingScores(!editingScores);
-                }}
-                style={{
-                  background: editingScores ? 'var(--accent)' : 'transparent',
-                  border: `1px solid ${editingScores ? 'var(--accent)' : 'var(--border)'}`,
-                  color: editingScores ? '#000' : 'var(--text-muted)',
-                  borderRadius: '6px',
-                  padding: '4px 10px',
-                  fontSize: '0.72rem',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              >
-                <Pencil className="w-3 h-3" />
-                {editingScores ? 'Done' : 'Edit Scores'}
-              </button>
-            </div>
-
-            {editingScores && (
-              <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Naive Score</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.1"
-                    value={customNaive}
-                    onChange={(e) => setCustomNaive(Number(e.target.value))}
-                    style={{
-                      width: '100%',
-                      background: 'var(--bg-card)',
-                      border: '1px solid var(--border)',
-                      borderRadius: '6px',
-                      padding: '6px 10px',
-                      color: 'var(--text)',
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: '0.85rem',
-                    }}
-                  />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Hardened Score</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.1"
-                    value={customHardened}
-                    onChange={(e) => setCustomHardened(Number(e.target.value))}
-                    style={{
-                      width: '100%',
-                      background: 'var(--bg-card)',
-                      border: '1px solid var(--border)',
-                      borderRadius: '6px',
-                      padding: '6px 10px',
-                      color: 'var(--text)',
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: '0.85rem',
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="score-bars">
-              <div className="score-row">
-                <span className="score-label">Naive Score</span>
-                <div className="score-bar-track">
-                  <div className="score-bar-fill naive" style={{ width: `${displayNaive}%`, backgroundColor: naiveColor }} />
-                </div>
-                <span className="score-number">{displayNaive.toFixed(1)}</span>
-                <TierBadge tier={agent.naiveTier} size="sm" />
-              </div>
-              <div className="score-row">
-                <span className="score-label">Hardened Score</span>
-                <div className="score-bar-track">
-                  <div className="score-bar-fill hardened" style={{ width: `${displayHardened}%`, backgroundColor: hardenedColor }} />
-                </div>
-                <span className="score-number">{displayHardened.toFixed(1)}</span>
-                <TierBadge tier={agent.hardenedTier} size="sm" />
-              </div>
-            </div>
-            <div className="score-delta-display">
-              {scoreDiff > 0 ? (
-                <span className="delta-negative">Mitigations reduced score by {scoreDiff.toFixed(1)} points</span>
-              ) : scoreDiff < 0 ? (
-                <span className="delta-positive">Mitigations increased score by {Math.abs(scoreDiff).toFixed(1)} points</span>
-              ) : (
-                <span className="delta-neutral">No mitigation impact</span>
-              )}
-            </div>
-            <div className="score-meta">
-              <div className="meta-item">
-                <span className="meta-label">On-Chain Weight</span>
-                <span className="meta-value">{agent.onChainWeight.toFixed(2)}x</span>
-              </div>
-              <div className="meta-item">
-                <span className="meta-label">Total Reviews</span>
-                <span className="meta-value">{agent.feedbackCount}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Mitigation Flags */}
-          <div className="slideover-section">
-            <h3>Mitigation Flags</h3>
-            <div className="flag-list">
-              {[
-                { label: 'Sybil Mutual Feedback', count: agent.mitigationFlags.sybilMutual, color: '#ef4444' },
-                { label: 'Velocity Burst', count: agent.mitigationFlags.velocityBurst, color: '#f97316' },
-                { label: 'Temporal Decay', count: agent.mitigationFlags.temporalDecay, color: '#eab308' },
-                { label: 'New Submitter Discount', count: agent.mitigationFlags.newSubmitter, color: '#3b82f6' },
-                { label: 'Anomaly Burst', count: agent.mitigationFlags.anomalyBurst, color: '#a855f7' },
-              ].map(flag => (
-                <div key={flag.label} className="flag-row">
-                  <span className="flag-label">{flag.label}</span>
-                  <div className="flag-bar-track">
-                    <div className="flag-bar-fill" style={{ width: `${(flag.count / maxFlag) * 100}%`, backgroundColor: flag.color }} />
-                  </div>
-                  <span className="flag-count" style={{ color: flag.count > 0 ? flag.color : '#6b7280' }}>
-                    {flag.count}
-                  </span>
-                </div>
-              ))}
-            </div>
-            {agent.mitigationFlags.sybilMutual > 0 && (
-              <p className="flag-note">
-                {agent.mitigationFlags.sybilMutual} feedback entries flagged as part of a sybil mutual feedback ring
-              </p>
-            )}
-          </div>
-
-          {/* Feedback Timeline */}
-          <div className="slideover-section">
-            <h3>Feedback Timeline ({sortedFb.length} reviews)</h3>
-            <div className="timeline-chart">
-              {sortedFb.length > 0 ? (
-                <svg viewBox="0 0 600 200" className="timeline-svg" role="img" aria-label="Feedback timeline chart">
-                  {[0, 25, 50, 75, 100].map(y => (
-                    <g key={y}>
-                      <line x1={40} y1={180 - y * 1.6} x2={580} y2={180 - y * 1.6} stroke="var(--border-hover)" strokeWidth={0.5} />
-                      <text x={35} y={184 - y * 1.6} textAnchor="end" fontSize={9} fill="var(--text-muted)">{y}</text>
-                    </g>
-                  ))}
-                  {sortedFb.map((fb, i) => {
-                    const x = 40 + (i / Math.max(sortedFb.length - 1, 1)) * 540;
-                    const y = 180 - fb.value * 1.6;
-                    const nextFb = sortedFb[i + 1];
-                    const nextX = nextFb ? 40 + ((i + 1) / Math.max(sortedFb.length - 1, 1)) * 540 : x;
-                    const nextY = nextFb ? 180 - nextFb.value * 1.6 : y;
-                    return (
-                      <g key={fb.id}>
-                        {nextFb && <line x1={x} y1={y} x2={nextX} y2={nextY} stroke="var(--border-hover)" strokeWidth={1} />}
-                        <circle cx={x} cy={y} r={3} fill={fb.value >= 70 ? 'var(--success)' : fb.value >= 40 ? 'var(--warning)' : 'var(--danger)'} />
-                      </g>
-                    );
-                  })}
-                </svg>
-              ) : (
-                <p className="no-data">No feedback data available</p>
-              )}
-            </div>
-          </div>
-
-          {/* Demo Video Upload */}
-          <DemoVideoUpload agentId={agent.name} />
 
           {/* Staking Info */}
           <div className="slideover-section">
-            <h3>Staking &amp; Economic Trust</h3>
-            {staking && staking.isStaked && staking.stake ? (
-              <>
-                <div className="staking-detail-grid">
-                  <div className="staking-detail-item">
-                    <span className="meta-label">Publisher Stake</span>
-                    <span className="meta-value">{staking.stake.stakeAmountEth.toFixed(4)} MON</span>
-                  </div>
-                  <div className="staking-detail-item">
-                    <span className="meta-label">Delegated</span>
-                    <span className="meta-value">{staking.stake.delegatedStakeEth.toFixed(4)} MON</span>
-                  </div>
-                  <div className="staking-detail-item">
-                    <span className="meta-label">Total Stake</span>
-                    <span className="meta-value" style={{ fontSize: '1.1rem' }}>
-                      {staking.stake.totalStakeEth.toFixed(4)} MON
-                    </span>
-                  </div>
-                  <div className="staking-detail-item">
-                    <span className="meta-label">Stake Tier</span>
-                    <span className="stake-tier-badge" style={{
-                      color: STAKE_TIER_COLORS[staking.stake.tier ?? 0],
-                      borderColor: `${STAKE_TIER_COLORS[staking.stake.tier ?? 0]}40`,
-                    }}>
-                      {STAKE_TIER_LABELS[staking.stake.tier ?? 0]}
-                    </span>
-                  </div>
-                </div>
-                {staking.slashHistory.length > 0 && (
-                  <div style={{ marginTop: '16px' }}>
-                    <h4 style={{ fontSize: '0.75rem', color: 'var(--danger)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                      Slash History ({staking.slashHistory.length})
-                    </h4>
-                    {staking.slashHistory.map((slash, i) => (
-                      <div key={i} className="slash-card" style={{ marginBottom: '6px' }}>
-                        <div className="slash-card-header">
-                          <span className="slash-reason" style={{ margin: 0 }}>{slash.reason}</span>
-                          <span className="slash-amount">-{slash.amountEth.toFixed(4)} MON</span>
-                        </div>
-                        <span className="slash-time">{new Date(slash.timestamp * 1000).toLocaleDateString()}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="no-data" style={{ padding: '20px' }}>
-                <span style={{ fontSize: '1.2rem', display: 'block', marginBottom: '8px' }}>No Stake</span>
-                <span style={{ color: 'var(--text-muted)' }}>
-                  This skill has not staked collateral. Trust is reputation-only (Tier 1).
+            <div className="slideover-section-header-row">
+              <h3>Collateral &amp; Boost Status</h3>
+              <button
+                className="boost-gift-inline-btn"
+                onClick={() => setShowBoostModal(true)}
+                aria-label="Boost this skill"
+              >
+                <Gift className="w-3.5 h-3.5" />
+                Boost
+              </button>
+            </div>
+            <div className="boost-detail-card">
+              <div className="boost-detail-header">
+                <span className={`skill-card-badge boost level-${Math.max(0, Math.min(3, staking?.boost?.trustLevel ?? 0))}`}>
+                  Boost L{staking?.boost?.trustLevel ?? 0}
                 </span>
-              </div>
-            )}
-            <StakeActions
-              agentId={agentId}
-              isStaked={!!(staking && staking.isStaked)}
-              onTransactionConfirmed={refetchStaking}
-            />
-          </div>
-
-          {/* Attestation Info */}
-          <div className="slideover-section">
-            <h3>Cross-Chain Attestation</h3>
-            {attestation && attestation.status !== 'none' && attestation.record ? (
-              <>
-                <div className="attestation-status-header">
-                  <span className="attestation-status-badge-lg" style={{
-                    color: ATTESTATION_STATUS_COLORS[attestation.status as AttestationStatus],
-                    borderColor: `${ATTESTATION_STATUS_COLORS[attestation.status as AttestationStatus]}40`,
-                    backgroundColor: `${ATTESTATION_STATUS_COLORS[attestation.status as AttestationStatus]}15`,
-                  }}>
-                    <span style={{
-                      display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
-                      backgroundColor: ATTESTATION_STATUS_COLORS[attestation.status as AttestationStatus],
-                      marginRight: 6,
-                    }} />
-                    {ATTESTATION_STATUS_LABELS[attestation.status as AttestationStatus]}
+                {staking?.boost?.exists && (
+                  <span className="meta-label">
+                    {staking.boost.skillId ? 'ClawHub linked' : 'On-chain bond'}
                   </span>
-                </div>
-                <div className="staking-detail-grid" style={{ marginTop: '12px' }}>
-                  <div className="staking-detail-item">
-                    <span className="meta-label">On-Chain Score</span>
-                    <span className="meta-value">{attestation.record.score}</span>
-                  </div>
-                  <div className="staking-detail-item">
-                    <span className="meta-label">On-Chain Tier</span>
-                    <TierBadge tier={attestation.record.tier as TrustTier} size="sm" />
-                  </div>
-                  <div className="staking-detail-item">
-                    <span className="meta-label">Source Chain</span>
-                    <span className="chain-badge monad" style={{ fontSize: '0.65rem' }}>{attestation.record.sourceChain}</span>
-                  </div>
-                  <div className="staking-detail-item">
-                    <span className="meta-label">Freshness</span>
-                    <span className="meta-value" style={{
-                      color: attestation.record.isFresh ? ATTESTATION_STATUS_COLORS.active : ATTESTATION_STATUS_COLORS.stale,
-                    }}>
-                      {attestation.ageSeconds >= 0 ? formatAge(attestation.ageSeconds) : '\u2014'}
-                    </span>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="no-data" style={{ padding: '20px' }}>
-                <span style={{ fontSize: '1.2rem', display: 'block', marginBottom: '8px' }}>No Attestation</span>
-                <span style={{ color: 'var(--text-muted)' }}>
-                  This skill does not have an on-chain attestation yet.
-                </span>
+                )}
               </div>
-            )}
+              {staking?.boost?.exists ? (
+                <>
+                  <div className="staking-detail-grid" style={{ marginTop: '10px' }}>
+                    <div className="staking-detail-item">
+                      <span className="meta-label">Boost Units</span>
+                      <span className="meta-value">{staking.boost.boostUnits}</span>
+                    </div>
+                    <div className="staking-detail-item">
+                      <span className="meta-label">Total Staked</span>
+                      <span className="meta-value">{staking.boost.totalStakeMon.toFixed(4)} MON</span>
+                    </div>
+                    {staking.boost.riskTier && (
+                      <div className="staking-detail-item">
+                        <span className="meta-label">Risk Tier</span>
+                        <span className="meta-value">{staking.boost.riskTier}</span>
+                      </div>
+                    )}
+                    {staking.boost.skillId && (
+                      <div className="staking-detail-item">
+                        <span className="meta-label">Skill ID</span>
+                        <span className="meta-value">{staking.boost.skillId}</span>
+                      </div>
+                    )}
+                  </div>
+                  {staking.boost.lastSlash && (
+                    <div className="slash-card" style={{ marginTop: '12px' }}>
+                      <h4 style={{ fontSize: '0.7rem', color: 'var(--danger)', marginBottom: '6px', textTransform: 'uppercase' }}>Last Slash</h4>
+                      <div className="slash-card-header">
+                        <span>Severity {staking.boost.lastSlash.severityBps / 100}%</span>
+                        <span className="slash-amount">-{staking.boost.lastSlash.amountMon.toFixed(4)} MON</span>
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        {staking.boost.lastSlash.evidenceURI && <span>{staking.boost.lastSlash.evidenceURI}</span>}
+                        {staking.boost.lastSlash.txHash && (
+                          <a href={`https://testnet.monadexplorer.com/tx/${staking.boost.lastSlash.txHash}`} target="_blank" rel="noopener noreferrer" style={{ marginLeft: '8px', color: 'var(--accent)' }}>
+                            View TX
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="no-data" style={{ marginTop: '10px' }}>
+                  No collateral posted. Boost this skill to add a stake-backed trust signal.
+                </p>
+              )}
+            </div>
           </div>
 
           {/* Recent Feedback */}
           <div className="slideover-section">
-            <h3>Recent Feedback</h3>
+            <h3>Recent Signals</h3>
             <div className="feedback-list">
               {sortedFb.slice(-10).reverse().map(fb => (
                 <div key={fb.id} className="feedback-item">
@@ -444,11 +435,28 @@ export default function SkillSlideOver({ agentId, onClose }: SkillSlideOverProps
                   <span className="fb-time">{new Date(fb.timestamp).toLocaleDateString()}</span>
                 </div>
               ))}
-              {sortedFb.length === 0 && <p className="no-data">No feedback yet</p>}
+              {sortedFb.length === 0 && <p className="no-data">No signals recorded</p>}
             </div>
           </div>
 
         </div>
+
+        {showBoostModal && (
+          <BoostModal
+            agentId={agent.agentId}
+            agentName={agent.name}
+            currentTrustLevel={staking?.boost?.trustLevel ?? 0}
+            currentBoostUnits={staking?.boost?.boostUnits ?? 0}
+            agent={agent}
+            boost={staking?.boost}
+            onClose={() => setShowBoostModal(false)}
+            onBoostComplete={() => {
+              setShowBoostModal(false);
+              refetchStaking();
+              setTimeout(refetchStaking, 3000);
+            }}
+          />
+        )}
       </div>
     </>
   );

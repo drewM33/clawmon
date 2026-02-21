@@ -30,10 +30,28 @@ import {
 } from '../src/scoring/usage-weighted.js';
 import {
   registerSkillPricing,
-  processSkillPayment,
+  recordVerifiedPayment,
   getCallerReceiptsForSkill,
   hasPaymentHistory,
 } from '../src/payments/x402.js';
+
+let testPaymentCounter = 0;
+
+/** Test helper: record a payment with synthetic on-chain data */
+function recordTestPayment(agentId: string, caller: string): void {
+  testPaymentCounter++;
+  recordVerifiedPayment({
+    agentId,
+    caller,
+    txHash: `0x${'0'.repeat(63)}${testPaymentCounter.toString(16)}`,
+    amountEth: 0.001,
+    publisherPayoutEth: 0.0008,
+    protocolPayoutEth: 0.0001,
+    insurancePayoutEth: 0.0001,
+    onChainPaymentId: testPaymentCounter,
+    blockTimestamp: Math.floor(Date.now() / 1000),
+  });
+}
 
 let testsPassed = 0;
 let testsFailed = 0;
@@ -428,12 +446,12 @@ function testCredibilityTierDetermination(): void {
   registerSkillPricing('tier-test-skill', 'test-publisher', 'A');
 
   // Create payment receipts for paid reviewers
-  processSkillPayment('tier-test-skill', 'paid-staked-user');
-  processSkillPayment('tier-test-skill', 'paid-staked-user');
-  processSkillPayment('tier-test-skill', 'paid-staked-user');
+  recordTestPayment('tier-test-skill', 'paid-staked-user');
+  recordTestPayment('tier-test-skill', 'paid-staked-user');
+  recordTestPayment('tier-test-skill', 'paid-staked-user');
 
-  processSkillPayment('tier-test-skill', 'paid-unstaked-user');
-  processSkillPayment('tier-test-skill', 'paid-unstaked-user');
+  recordTestPayment('tier-test-skill', 'paid-unstaked-user');
+  recordTestPayment('tier-test-skill', 'paid-unstaked-user');
 
   // Staked addresses
   const stakedAddresses = new Set(['paid-staked-user', 'staked-but-not-paid']);
@@ -511,11 +529,11 @@ function testUsageWeightedScoring(): void {
   registerSkillPricing('usage-test-skill', 'test-pub', 'BBB');
 
   // Create payment history: verified users paid for the skill
-  processSkillPayment('usage-test-skill', 'verified-high-1');
-  processSkillPayment('usage-test-skill', 'verified-high-1');
-  processSkillPayment('usage-test-skill', 'verified-high-1');
-  processSkillPayment('usage-test-skill', 'verified-high-2');
-  processSkillPayment('usage-test-skill', 'verified-high-2');
+  recordTestPayment('usage-test-skill', 'verified-high-1');
+  recordTestPayment('usage-test-skill', 'verified-high-1');
+  recordTestPayment('usage-test-skill', 'verified-high-1');
+  recordTestPayment('usage-test-skill', 'verified-high-2');
+  recordTestPayment('usage-test-skill', 'verified-high-2');
 
   const stakedAddresses = new Set(['verified-high-1']);
 

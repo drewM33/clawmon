@@ -183,26 +183,49 @@ export async function loadStakesFromChain(agentNames: string[]): Promise<void> {
     return;
   }
 
+  const hashToName = new Map<string, string>();
+  for (const name of agentNames) {
+    hashToName.set(agentIdToHash(name).toLowerCase(), name);
+  }
+
   let loaded = 0;
   let slashCount = 0;
 
-  // Read each agent's stake by name (computes keccak hash internally)
-  for (const name of agentNames) {
-    try {
-      const stake = await readAgentStake(name);
-      if (stake && stake.active) {
-        simulatedStakes.set(name, stake);
-        loaded++;
-      }
+  const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-      const slashes = await readAgentSlashHistory(name);
-      if (slashes.length > 0) {
-        simulatedSlashHistory.push(...slashes);
-        slashCount += slashes.length;
+  try {
+    const agentCount = Number(await contract.getAgentCount());
+    console.log(`  [staking] Contract has ${agentCount} staked agents, checking against ${agentNames.length} known skills...`);
+
+    for (let i = 0; i < agentCount; i++) {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          await delay(150);
+          const hash = await contract.agentIds(i);
+          const name = hashToName.get(String(hash).toLowerCase());
+          if (!name) break;
+
+          await delay(150);
+          const stake = await readAgentStake(name);
+          if (stake && stake.active) {
+            simulatedStakes.set(name, stake);
+            loaded++;
+          }
+
+          await delay(150);
+          const slashes = await readAgentSlashHistory(name);
+          if (slashes.length > 0) {
+            simulatedSlashHistory.push(...slashes);
+            slashCount += slashes.length;
+          }
+          break;
+        } catch {
+          await delay(1000 * (attempt + 1));
+        }
       }
-    } catch {
-      // Skip agents that fail to read
     }
+  } catch (err) {
+    console.error('  [staking] Failed to read agent count from contract:', err);
   }
 
   console.log(`  [staking] Loaded ${loaded} active stakes, ${slashCount} slash records from chain`);

@@ -25,6 +25,7 @@ import type { MitigationConfig } from '../mitigations/types.js';
 import { DEFAULT_MITIGATION_CONFIG } from '../mitigations/types.js';
 import type { AgentStakeInfo, SlashRecord } from './types.js';
 import { STAKING_CONSTANTS } from './types.js';
+import { getQualityBoost } from '../scoring/quality.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -52,10 +53,10 @@ export interface StakeWeightedConfig {
 
 export const DEFAULT_STAKE_WEIGHTED_CONFIG: StakeWeightedConfig = {
   enabled: true,
-  baselineStake: 0.05,       // 0.05 ETH baseline
+  baselineStake: 0.05,       // 0.05 MON baseline
   multiplierCap: 5.0,        // max 5x weight for high-stake reviewers
   publisherBoostMax: 10,     // up to +10 score points for well-staked agents
-  publisherTargetStake: 0.25, // full boost at 0.25 ETH total stake
+  publisherTargetStake: 0.25, // full boost at 0.25 MON total stake
   slashPenaltyPerEvent: 15,  // -15 score points per recent slash
   slashRecencyWindowMs: 30 * 24 * 60 * 60 * 1000, // 30-day window
   tenureBoostMax: 8,         // up to +8 score points for long tenure
@@ -171,7 +172,13 @@ export function computeStakeWeightedSummary(
     adjustedScore += tenureBoost;
   }
 
-  // Step 5: Slash penalty
+  // Step 5: Quality documentation boost
+  const qualityBoost = getQualityBoost(agentId);
+  if (qualityBoost > 0) {
+    adjustedScore += qualityBoost;
+  }
+
+  // Step 6: Slash penalty
   if (slashHistory.length > 0) {
     const now = Date.now();
     const recentSlashes = slashHistory.filter(

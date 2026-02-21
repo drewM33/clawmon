@@ -150,6 +150,7 @@ export interface StakingOverviewItem {
   stakedAt: number;
   slashCount: number;
   totalSlashedEth: number;
+  boost?: BoostStatus;
 }
 
 export interface SlashRecord {
@@ -184,6 +185,32 @@ export interface AgentStakingDetail {
   } | null;
   slashHistory: SlashRecord[];
   isStaked: boolean;
+  boost?: BoostStatus;
+}
+
+export interface LastSlashInfo {
+  skillId: number;
+  amountMon: number;
+  severityBps: number;
+  reasonHash: string;
+  evidenceURI: string;
+  caseId: string;
+  blockNumber: number;
+  txHash: string;
+}
+
+export interface BoostStatus {
+  configured: boolean;
+  agentId: string;
+  exists: boolean;
+  skillId: number | null;
+  active: boolean;
+  riskTier: 'LOW' | 'MEDIUM' | 'HIGH' | null;
+  trustLevel: number;
+  boostUnits: number;
+  totalStakeMon: number;
+  provider: string | null;
+  lastSlash: LastSlashInfo | null;
 }
 
 export const STAKE_TIER_COLORS: Record<number, string> = {
@@ -199,6 +226,83 @@ export const STAKE_TIER_LABELS: Record<number, string> = {
   2: 'Tier 2 — Mid',
   3: 'Tier 2 — High',
 };
+
+// ---------------------------------------------------------------------------
+// Reputation Tiers — claw → lobster → whale
+// ---------------------------------------------------------------------------
+
+export type ReputationTier = 'claw' | 'lobster' | 'whale';
+
+export interface UserReputationResponse {
+  address: string;
+  tier: ReputationTier;
+  tierLabel: string;
+  totalUpvotes: number;
+  accurateUpvotes: number;
+  accuracy: number;
+  hasPublishedSkill: boolean;
+  upvoteWeight: number;
+  upvoteCost: number;
+  followerCount: number;
+  followingCount: number;
+  nextTier: ReputationTier | null;
+  nextTierRequirements: {
+    upvotesNeeded: number;
+    accuracyNeeded: number;
+    needsPublishedSkill: boolean;
+  } | null;
+}
+
+export interface CuratorLeaderboardEntry {
+  address: string;
+  tier: ReputationTier;
+  totalUpvotes: number;
+  accuracy: number;
+  followerCount: number;
+  score: number;
+}
+
+export const REPUTATION_TIER_LABELS: Record<ReputationTier, string> = {
+  claw: 'Claw',
+  lobster: 'Lobster',
+  whale: 'Whale',
+};
+
+export const REPUTATION_TIER_COLORS: Record<ReputationTier, string> = {
+  claw: '#6b6b7b',
+  lobster: '#f97316',
+  whale: '#3b82f6',
+};
+
+export interface ConvictionScore {
+  address: string;
+  agentId: string;
+  scoreAtUpvote: number;
+  currentScore: number;
+  improvement: number;
+  daysSinceUpvote: number;
+  timeFactor: number;
+  convictionMultiplier: number;
+}
+
+export interface ConvictionResponse {
+  address: string;
+  yieldMultiplier: number;
+  convictionAvg: number;
+  tierBonus: number;
+  skills: ConvictionScore[];
+}
+
+export interface ConvictionLeaderboardEntry {
+  address: string;
+  tier: ReputationTier;
+  totalUpvotes: number;
+  accuracy: number;
+  followerCount: number;
+  avgConviction: number;
+  yieldMultiplier: number;
+  score: number;
+}
 
 // ---------------------------------------------------------------------------
 // Attestation Types (Phase 5)

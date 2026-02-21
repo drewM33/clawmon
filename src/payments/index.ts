@@ -1,7 +1,10 @@
 /**
- * Trusted ClawMon — x402 Payment Module (Phase 9)
+ * Trusted ClawMon — x402 Payment Module (Phase 9 + Phase 13)
  *
  * Barrel export for the payment subsystem.
+ *
+ * Phase 9:  On-chain payment settlement via SkillPaywall contract
+ * Phase 13: Live x402 HTTP protocol, execution proofs, skill proxy
  */
 
 export {
@@ -26,9 +29,10 @@ export type {
 
 export {
   registerSkillPricing,
+  registerSkillOnChain,
   updateSkillTier,
-  processSkillPayment,
-  checkPaymentAccess,
+  recordVerifiedPayment,
+  getPaymentRequirements,
   computePaymentTrustSignal,
   computeStakingYield,
   getPaymentStats,
@@ -39,6 +43,49 @@ export {
   getAllReceipts,
   getCallerReceiptsForSkill,
   hasPaymentHistory,
-  seedSimulatedPayments,
   loadPaymentsFromChain,
 } from './x402.js';
+
+// Phase 13: x402 HTTP protocol
+export {
+  buildPaymentRequired,
+  verifyPaymentTx,
+  decodePaymentSignature,
+  encodePaymentRequired,
+  encodePaymentResponse,
+  buildProofOfPayment,
+  getPaywallAddress,
+} from './x402-protocol.js';
+
+export type {
+  PaymentRequirement,
+  PaymentRequiredResponse,
+  VerifiedPayment,
+  PaymentVerificationResult,
+} from './x402-protocol.js';
+
+// Phase 13: Execution proofs
+export {
+  generateExecutionReceipt,
+  verifyExecutionReceipt,
+  hashOutput,
+  isValidReceiptShape,
+} from './execution-proof.js';
+
+export type {
+  ExecutionReceipt,
+  ReceiptVerification,
+} from './execution-proof.js';
+
+// Phase 13: Skill proxy
+export {
+  registerSkillEndpoint,
+  getSkillEndpoint,
+  getAllSkillEndpoints,
+  handleSkillInvoke,
+  handleSkillPricing,
+} from './skill-proxy.js';
+
+export type {
+  SkillEndpoint,
+} from './skill-proxy.js';

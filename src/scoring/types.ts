@@ -152,7 +152,7 @@ export interface RegisterMessage extends OnChainMessage {
   publisher: string;
   category: string;
   description?: string;
-  feedbackAuthPolicy: 'open' | 'selective' | 'closed';
+  feedbackAuthPolicy: 'open' | 'selective' | 'closed' | 'x402_verified';
 }
 
 /** Feedback submission message */
@@ -179,7 +179,7 @@ export interface RevokeFeedbackMessage extends OnChainMessage {
 export interface UpdateAuthMessage extends OnChainMessage {
   type: 'update_auth';
   agentId: string;
-  feedbackAuthPolicy: 'open' | 'selective' | 'closed';
+  feedbackAuthPolicy: 'open' | 'selective' | 'closed' | 'x402_verified';
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +190,7 @@ export interface UpdateAuthMessage extends OnChainMessage {
  * Credibility tiers for feedback weighting based on x402 payment history
  * and staking status of the reviewer.
  *
- *   - paid_and_staked: Reviewer has x402 payment receipts AND has staked (5-10x weight)
+ *   - paid_and_staked: Reviewer has x402 payment receipts AND has staked MON (5-10x weight)
  *   - paid_unstaked:   Reviewer has x402 payment receipts but has NOT staked (1-2x weight)
  *   - unpaid_unstaked: Reviewer has NO payment receipts and is NOT staked (0.1x weight)
  */
@@ -241,6 +241,68 @@ export interface AnnotatedFeedback extends Feedback {
   verifiedUser: boolean;
   paymentCount: number;
   reviewerStaked: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Reputation Tiers — User Progression (claw → lobster → whale)
+// ---------------------------------------------------------------------------
+
+export type ReputationTier = 'claw' | 'lobster' | 'whale';
+
+export interface ReputationTierConfig {
+  tier: ReputationTier;
+  label: string;
+  upvoteWeight: number;
+  upvoteCostMon: number;
+  minUpvotes: number;
+  minAccuracy: number;
+  requiresPublishedSkill: boolean;
+}
+
+export const REPUTATION_TIERS: Record<ReputationTier, ReputationTierConfig> = {
+  claw: {
+    tier: 'claw',
+    label: 'Claw',
+    upvoteWeight: 1.0,
+    upvoteCostMon: 0.001,
+    minUpvotes: 0,
+    minAccuracy: 0,
+    requiresPublishedSkill: false,
+  },
+  lobster: {
+    tier: 'lobster',
+    label: 'Lobster',
+    upvoteWeight: 3.0,
+    upvoteCostMon: 0.005,
+    minUpvotes: 50,
+    minAccuracy: 0.60,
+    requiresPublishedSkill: false,
+  },
+  whale: {
+    tier: 'whale',
+    label: 'Whale',
+    upvoteWeight: 5.0,
+    upvoteCostMon: 0.01,
+    minUpvotes: 200,
+    minAccuracy: 0.70,
+    requiresPublishedSkill: true,
+  },
+};
+
+/** Tracked user reputation state */
+export interface UserReputation {
+  address: string;
+  tier: ReputationTier;
+  totalUpvotes: number;
+  accurateUpvotes: number;
+  accuracy: number;
+  hasPublishedSkill: boolean;
+  /** Upvote history: agentId → { timestamp, scoreAtUpvote } */
+  upvoteHistory: Map<string, { timestamp: number; scoreAtUpvote: number }>;
+  /** Addresses this user follows (curator addresses) */
+  following: Set<string>;
+  /** Addresses following this user */
+  followers: Set<string>;
 }
 
 // ---------------------------------------------------------------------------

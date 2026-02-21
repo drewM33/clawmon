@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useLeaderboard } from '../hooks/useApi';
 import { useWSEvent } from '../hooks/useWebSocket';
 import TierBadge from './TierBadge';
-import RegisterSkillForm from './RegisterSkillForm';
 import type { AgentSummary, TrustTier, WSLeaderboardUpdate, WSScoreUpdate } from '../types';
 import { STAKE_TIER_COLORS, ATTESTATION_STATUS_COLORS } from '../types';
 
@@ -132,8 +131,6 @@ export default function Leaderboard() {
         <h2>Agent Trust Leaderboard</h2>
         <p className="subtitle">Ranked by hardened score — mitigations applied</p>
       </div>
-
-      <RegisterSkillForm />
 
       <div className="filter-bar">
         {(['all', 'legitimate', 'flagged', 'sybil'] as const).map(f => (

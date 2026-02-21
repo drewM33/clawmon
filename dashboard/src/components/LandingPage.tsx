@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { useStats, useStakingStats } from '../hooks/useApi';
-import { Shield, Lock, Cpu, AlertTriangle, ArrowRight, Activity, Users, Layers } from 'lucide-react';
+import { Shield, Lock, Cpu, AlertTriangle, ArrowRight, Users, TrendingUp, Star, Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const fadeUp = {
@@ -16,6 +16,18 @@ export default function LandingPage() {
   const navigate = useNavigate();
   const { data: stats } = useStats();
   const { data: stakingStats } = useStakingStats();
+  // Where each boost goes: stake allocation (not payment splits)
+  const boostSplit = [
+    { label: 'Skill stake', bps: 8800, pct: 88, tone: 'stake' },
+    { label: 'Verification pool', bps: 800, pct: 8, tone: 'verification' },
+    { label: 'Resilience reserve', bps: 400, pct: 4, tone: 'resilience' },
+  ] as const;
+  // Slash outcomes: no treasury, compensation-focused
+  const slashSplit = [
+    { label: 'User compensation', pct: 45, tone: 'compensation' },
+    { label: 'Reporter', pct: 40, tone: 'reporter' },
+    { label: 'Burn', pct: 15, tone: 'burn' },
+  ] as const;
 
   const verifiedCount = stats
     ? stats.totalAgents - stats.flaggedAgents - stats.sybilAgents
@@ -33,21 +45,6 @@ export default function LandingPage() {
           }}
         />
 
-        <motion.span
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.3 }}
-          className="relative z-10 inline-flex items-center gap-2 px-4 py-1.5 rounded-full border text-xs font-semibold tracking-wide mb-8"
-          style={{
-            background: 'var(--color-accent-muted)',
-            borderColor: 'rgba(196, 92, 58, 0.25)',
-            color: 'var(--color-accent)',
-          }}
-        >
-          <Shield className="w-3.5 h-3.5" />
-          ERC-8004 + Monad Testnet
-        </motion.span>
-
         <motion.h1
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -55,9 +52,9 @@ export default function LandingPage() {
           className="relative z-10 text-[2.8rem] leading-[1.15] font-extrabold tracking-[-0.03em] max-w-2xl"
           style={{ color: 'var(--color-text-primary)' }}
         >
-          Trust scores for AI skills.
+          Agents need to know
           <br />
-          <span style={{ color: 'var(--color-success)' }}>AI skills underwritten.</span>
+          <span style={{ color: 'var(--color-success)' }}>which skills to call.</span>
         </motion.h1>
 
         <motion.p
@@ -67,8 +64,8 @@ export default function LandingPage() {
           className="relative z-10 mt-5 text-base max-w-xl leading-relaxed"
           style={{ color: 'var(--color-text-secondary)' }}
         >
-          Verified on-chain reputation backed by x402 payment receipts, ERC-8004
-          agentic identity, and the highest throughput blockchain in the universe.
+          ClawMon is the trust layer for the agent economy. Stake-weighted
+          reputation scores that agents can query before invoking any MCP skill.
         </motion.p>
 
         <motion.div
@@ -113,13 +110,11 @@ export default function LandingPage() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.5 }}
-          className="relative z-10 grid grid-cols-2 gap-8 mt-14 sm:grid-cols-4"
+          className="relative z-10 mt-14 flex flex-wrap items-start justify-center gap-8"
         >
           {[
-            { value: verifiedCount ?? '...', label: 'Verified Skills' },
-            { value: stats?.totalFeedback?.toLocaleString() ?? '...', label: 'Feedback Entries' },
-            { value: stats?.sybilClustersDetected ?? '...', label: 'Sybil Rings Caught' },
-            { value: stakingStats ? `${stakingStats.totalStakedEth.toFixed(1)} MON` : '...', label: 'Total Staked' },
+            { value: verifiedCount ?? '...', label: 'Skills Indexed' },
+            { value: stakingStats ? `${stakingStats.totalStakedEth.toFixed(1)} MON` : '...', label: 'Staked as Collateral' },
           ].map((stat, i) => (
             <motion.div
               key={stat.label}
@@ -127,7 +122,7 @@ export default function LandingPage() {
               initial="hidden"
               animate="visible"
               variants={fadeUp}
-              className="flex flex-col items-center gap-1"
+              className="flex min-w-[160px] flex-col items-center gap-1"
             >
               <span
                 className="font-mono text-2xl font-extrabold tracking-tight"
@@ -165,7 +160,7 @@ export default function LandingPage() {
               className="text-lg font-bold tracking-tight"
               style={{ color: 'var(--color-text-primary)' }}
             >
-              The AI Agent Trust Problem
+              Your agent can't tell good skills from bad ones
             </h2>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 mt-4">
@@ -177,14 +172,14 @@ export default function LandingPage() {
                 className="font-mono text-2xl font-bold"
                 style={{ color: 'var(--color-danger)' }}
               >
-                5,700+
+                9,000+
               </div>
               <div
                 className="text-sm mt-1"
                 style={{ color: 'var(--color-text-secondary)' }}
               >
-                MCP skills in the ecosystem with{' '}
-                <span className="font-semibold" style={{ color: 'var(--color-danger)' }}>230+ confirmed malicious</span>
+                MCP skills in the wild — agents call them blindly with{' '}
+                <span className="font-semibold" style={{ color: 'var(--color-danger)' }}>no way to verify safety first</span>
               </div>
             </div>
             <div
@@ -195,13 +190,13 @@ export default function LandingPage() {
                 className="font-mono text-2xl font-bold"
                 style={{ color: 'var(--color-warning)' }}
               >
-                99.5%
+                {'<'}3%
               </div>
               <div
                 className="text-sm mt-1"
                 style={{ color: 'var(--color-text-secondary)' }}
               >
-                Noise ratio in ERC-8004 registries — 22,000+ agents, ~100 legitimate
+                Of registered agents show real usage — the signal-to-noise ratio is unusable for automated discovery
               </div>
             </div>
           </div>
@@ -209,10 +204,132 @@ export default function LandingPage() {
             className="text-sm mt-4 leading-relaxed"
             style={{ color: 'var(--color-text-muted)' }}
           >
-            No trust layer. No identity verification. No feedback system. No economic
-            consequences for publishing malicious skills.
+            No queryable trust score. No on-chain reputation. No economic penalty for
+            shipping a malicious skill. Agents deserve better inputs.
           </p>
         </motion.div>
+      </section>
+
+      {/* ── Boost Economy Graphic ───────────────────────────── */}
+      <section className="px-6 py-16 max-w-5xl mx-auto w-full">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-60px' }}
+          transition={{ duration: 0.4 }}
+          className="text-center mb-10"
+        >
+          <h2
+            className="text-2xl font-bold tracking-tight"
+            style={{ color: 'var(--color-text-primary)' }}
+          >
+            Capital-backed trust signals
+          </h2>
+          <p
+            className="text-sm mt-2 max-w-lg mx-auto"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            Boosts are on-chain commitments, not likes. MON splits across
+            skill collateral, verification, and an insurance fund — all queryable by any agent.
+          </p>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 24 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-40px' }}
+          transition={{ duration: 0.5 }}
+          className="boost-infographic"
+        >
+          <div className="boost-infographic-grid">
+            <div className="boost-flow-card boost-flow-card-stake">
+              <div className="boost-flow-card-head">
+                <Zap className="boost-flow-card-icon" />
+                <h3>Boosted Skill Backing</h3>
+              </div>
+              <p className="boost-flow-card-copy">
+                Boosts become on-chain collateral that any agent can read as a trust signal before invoking a skill.
+              </p>
+              <div className="boost-plan-stack">
+                <div className="boost-plan-line">
+                  <span className="boost-plan-name">TRUST BASIC</span>
+                  <span className="boost-plan-amount">0.5 MON</span>
+                </div>
+                <div className="boost-plan-line">
+                  <span className="boost-plan-name">TRUST BOOST</span>
+                  <span className="boost-plan-amount">2.0 MON</span>
+                </div>
+              </div>
+              <div className="boost-ladder">
+                <span>L1: 2 boosts</span>
+                <span>L2: 7 boosts</span>
+                <span>L3: 14 boosts</span>
+              </div>
+            </div>
+
+            <div className="boost-flow-card boost-flow-card-payments">
+              <div className="boost-flow-card-head">
+                <TrendingUp className="boost-flow-card-icon" />
+                <h3>Per Boost</h3>
+              </div>
+              <p className="boost-flow-card-copy">
+                88% backs the skill as queryable collateral. 8% funds verification — oracles, attestation, evidence review. 4% flows to an insurance fund that compensates agents and users if a skill misbehaves.
+              </p>
+              <div className="boost-split-list">
+                {boostSplit.map((slice) => (
+                  <div key={slice.label} className="boost-split-row">
+                    <div className="boost-split-label-row">
+                      <span>{slice.label}</span>
+                      <strong>{slice.pct}%</strong>
+                    </div>
+                    <div className="boost-split-track">
+                      <span
+                        className={`boost-split-fill tone-${slice.tone}`}
+                        style={{ width: `${slice.pct}%` }}
+                      />
+                    </div>
+                    <span className="boost-split-bps">{slice.bps} bps</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="boost-flow-card boost-flow-card-protection">
+              <div className="boost-flow-card-head">
+                <Shield className="boost-flow-card-icon" />
+                <h3>Slash Outcomes</h3>
+              </div>
+              <p className="boost-flow-card-copy">
+                Bad skills lose their stake. Funds flow to affected agents and the reporters who flagged the issue — no middleman, no treasury cut.
+              </p>
+              <div className="boost-slash-grid boost-slash-grid-three">
+                {slashSplit.map((slice) => (
+                  <div key={slice.label} className={`boost-slash-pill tone-${slice.tone}`}>
+                    <strong>{slice.pct}%</strong>
+                    <span>{slice.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="boost-infographic-footer">
+            <span>Boost = machine-readable trust</span>
+            <span>88% backs the skill on-chain</span>
+            <span>Slash funds go to affected parties, not a treasury</span>
+          </div>
+        </motion.div>
+
+        <motion.p
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.3 }}
+          className="text-center text-sm mt-6 max-w-xl mx-auto font-mono"
+          style={{ color: 'var(--color-text-muted)' }}
+        >
+          Every flow on-chain. Every signal queryable. Agents can verify before they invoke.
+        </motion.p>
       </section>
 
       {/* ── Three-Tier Trust Model ─────────────────────────── */}
@@ -228,13 +345,14 @@ export default function LandingPage() {
             className="text-2xl font-bold tracking-tight"
             style={{ color: 'var(--color-text-primary)' }}
           >
-            Three-Tier Trust Model
+            Three layers of verifiable trust
           </h2>
           <p
             className="text-sm mt-2 max-w-lg mx-auto"
             style={{ color: 'var(--color-text-secondary)' }}
           >
-            Progressive trust verification — from community signals to hardware attestation.
+            Each tier produces a stronger on-chain signal — agents can set their
+            own threshold for which tiers they require before calling a skill.
           </p>
         </motion.div>
 
@@ -242,41 +360,41 @@ export default function LandingPage() {
           {[
             {
               tier: 'Tier 1',
-              title: 'Community Reputation',
-              subtitle: 'Soft Trust',
+              title: 'Reputation Score',
+              subtitle: 'Community Signal',
               icon: Users,
               color: 'var(--color-success)',
               items: [
-                'ERC-8004 on-chain feedback',
-                'Hardened scoring engine',
-                'Sybil detection via graph analysis',
-                'Velocity + anomaly burst mitigation',
+                'ERC-8004 feedback aggregated on-chain',
+                'Sybil-resistant scoring via graph analysis',
+                'Velocity & burst anomaly filtering',
+                'Queryable score per skill address',
               ],
             },
             {
               tier: 'Tier 2',
-              title: 'Economic Staking',
-              subtitle: 'Bonded Trust',
+              title: 'Economic Bond',
+              subtitle: 'Collateralized Trust',
               icon: Lock,
               color: 'var(--color-staking)',
               items: [
-                'MON collateral staking',
-                'Slashing for malicious behavior',
-                'Delegated staking support',
-                'Insurance pool from slash funds',
+                'Publisher collateral readable on-chain',
+                'Slashing enforced by smart contract',
+                'Delegated staking from curator agents',
+                'Insurance fund for downstream consumers',
               ],
             },
             {
               tier: 'Tier 3',
               title: 'TEE Attestation',
-              subtitle: 'Hardware Trust',
+              subtitle: 'Hardware Proof',
               icon: Cpu,
               color: 'var(--color-tee)',
               items: [
-                'Trusted Execution Environment',
-                'Code-hash pinning & verification',
-                'Platform-level attestation',
-                'Behavior analysis in enclave',
+                'Execution inside Trusted Execution Environment',
+                'Code hash pinned and verifiable',
+                'Platform attestation proof on-chain',
+                'Runtime behavior monitored in enclave',
               ],
             },
           ].map((tier, i) => (
@@ -360,37 +478,38 @@ export default function LandingPage() {
             className="text-2xl font-bold tracking-tight"
             style={{ color: 'var(--color-text-primary)' }}
           >
-            How It Works
+            Built for agent workflows
           </h2>
           <p
             className="text-sm mt-2 max-w-lg mx-auto"
             style={{ color: 'var(--color-text-secondary)' }}
           >
-            A complete trust infrastructure stack built on ERC-8004 and Monad.
+            Four primitives that let agents evaluate, select, and safely invoke
+            skills without human intervention.
           </p>
         </motion.div>
 
         <div className="grid gap-3 sm:grid-cols-2">
           {[
             {
-              icon: Activity,
-              title: 'Real-Time Scoring',
-              desc: 'Feedback is processed through naive + hardened scoring engines with 5 independent mitigation layers.',
+              icon: Lock,
+              title: 'Stake to list',
+              desc: 'Skill publishers post MON collateral on-chain. Agents can read the bond size before deciding to invoke — higher stake, stronger signal.',
+            },
+            {
+              icon: TrendingUp,
+              title: 'Boost as curation',
+              desc: 'Agents and curators boost skills with real capital. Boost weight is tiered (Claw → Lobster → Whale) so signal quality scales with track record.',
+            },
+            {
+              icon: Star,
+              title: 'Conviction yield',
+              desc: 'Early boosters earn more as a skill climbs. Curator agents can build reputation and attract delegated stake from other agents that mirror their picks.',
             },
             {
               icon: Shield,
-              title: 'Attack Mitigation',
-              desc: 'Sybil rings detected via graph analysis. Velocity bursts, temporal decay, and anomaly detection catch manipulation.',
-            },
-            {
-              icon: Layers,
-              title: 'On-Chain Attestation',
-              desc: 'Trust scores bridged to Monad via AttestationRegistry. Cross-chain verification with freshness guarantees.',
-            },
-            {
-              icon: Lock,
-              title: 'Economic Security',
-              desc: 'Publishers stake MON as collateral. Malicious behavior triggers slashing. Slash funds flow to insurance pool.',
+              title: 'Automated protection',
+              desc: 'Slashed collateral routes to affected consumers via smart contract — no claims process, no human arbiter in the loop.',
             },
           ].map((item, i) => (
             <motion.div
@@ -451,14 +570,14 @@ export default function LandingPage() {
             className="text-xl font-bold tracking-tight"
             style={{ color: 'var(--color-text-primary)' }}
           >
-            Ready to explore the trust layer?
+            Give your agents better inputs
           </h2>
           <p
             className="text-sm mt-2 max-w-md mx-auto"
             style={{ color: 'var(--color-text-secondary)' }}
           >
-            Browse verified MCP skills, view attack mitigations in action,
-            and see how economic staking creates accountability.
+            Query collateral-backed trust scores, boost skills your agents rely on,
+            and let the registry do the vetting so your agents don't have to.
           </p>
           <div className="flex justify-center gap-3 mt-6">
             <button
@@ -493,12 +612,6 @@ export default function LandingPage() {
               View Documentation
             </a>
           </div>
-          <p
-            className="text-xs mt-6 font-mono"
-            style={{ color: 'var(--color-text-muted)' }}
-          >
-            ETHDenver 2026 &middot; ERC-8004 &middot; Monad Testnet
-          </p>
         </motion.div>
       </section>
     </div>

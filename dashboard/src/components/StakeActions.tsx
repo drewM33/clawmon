@@ -7,6 +7,7 @@ import {
   useSwitchChain,
 } from 'wagmi';
 import { parseEther, formatEther, keccak256, toBytes } from 'viem';
+import { ThumbsUp, ThumbsDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { monadTestnet } from '../config/wagmi';
 import {
   TRUST_STAKING_ADDRESS,
@@ -14,7 +15,7 @@ import {
 } from '../config/contracts';
 import { useTransactionFeed, type TxActivityType } from '../context/TransactionFeedContext';
 
-type ActionMode = 'idle' | 'stake' | 'delegate' | 'unstake';
+type ActionMode = 'idle' | 'upvote' | 'downvote';
 
 interface StakeActionsProps {
   agentId: string;
@@ -22,10 +23,10 @@ interface StakeActionsProps {
   onTransactionConfirmed: () => void;
 }
 
-const TIER_THRESHOLDS = [
-  { label: 'Low', min: '0.01', color: '#3b82f6' },
-  { label: 'Mid', min: '0.05', color: '#8b5cf6' },
-  { label: 'High', min: '0.25', color: '#f59e0b' },
+const VOTE_AMOUNTS = [
+  { label: '0.15', color: '#3b82f6' },
+  { label: '0.25', color: '#8b5cf6' },
+  { label: '0.50', color: '#f59e0b' },
 ];
 
 export default function StakeActions({
@@ -52,11 +53,17 @@ export default function StakeActions({
     reset,
   } = useWriteContract();
 
-  const { isLoading: isConfirming, isSuccess: isConfirmed } =
-    useWaitForTransactionReceipt({ hash: txHash });
+  const {
+    isLoading: isConfirming,
+    isSuccess: isConfirmed,
+    isError: receiptError,
+  } = useWaitForTransactionReceipt({
+    hash: txHash,
+    pollingInterval: 2_000,
+    timeout: 120_000,
+  });
 
-  // Read the agent's on-chain stake data to check publisher
-  const { data: stakeData } = useReadContract({
+  const { data: stakeData, refetch: refetchStake } = useReadContract({
     address: TRUST_STAKING_ADDRESS,
     abi: TRUST_STAKING_ABI,
     functionName: 'getAgentStake',
@@ -69,12 +76,8 @@ export default function StakeActions({
     | readonly [string, bigint, bigint, bigint, bigint, bigint, boolean, number]
     | undefined;
   const onChainActive = stakeRecord?.[6] ?? false;
-  const onChainPublisher = stakeRecord?.[0];
-  const isPublisher =
-    !!address && !!onChainPublisher && onChainActive &&
-    address.toLowerCase() === onChainPublisher.toLowerCase();
+  const onChainPublisher = stakeRecord?.[0] as `0x${string}` | undefined;
 
-  // Read pending unbonding for connected user
   const { data: unbondingData } = useReadContract({
     address: TRUST_STAKING_ADDRESS,
     abi: TRUST_STAKING_ABI,
@@ -84,7 +87,6 @@ export default function StakeActions({
     query: { enabled: !!address },
   });
 
-  // Push transaction to the activity feed when a tx hash is received
   useEffect(() => {
     if (txHash && !feedIdRef.current && pendingTypeRef.current) {
       feedIdRef.current = addTransaction({
@@ -96,7 +98,6 @@ export default function StakeActions({
     }
   }, [txHash, address, addTransaction]);
 
-  // Update the feed notification when the transaction is confirmed
   useEffect(() => {
     if (isConfirmed && feedIdRef.current) {
       updateTransaction(feedIdRef.current, { status: 'confirmed' });
@@ -104,18 +105,20 @@ export default function StakeActions({
     }
   }, [isConfirmed, updateTransaction]);
 
-  // Update on error
   useEffect(() => {
-    if (writeError && feedIdRef.current) {
-      updateTransaction(feedIdRef.current, { status: 'failed' });
-      feedIdRef.current = null;
+    if (writeError) {
+      if (feedIdRef.current) {
+        updateTransaction(feedIdRef.current, { status: 'failed' });
+        feedIdRef.current = null;
+      }
+      refetchStake();
     }
-  }, [writeError, updateTransaction]);
+  }, [writeError, updateTransaction, refetchStake]);
 
-  // Refresh parent staking data after confirmation
   useEffect(() => {
     if (isConfirmed) {
       onTransactionConfirmed();
+      refetchStake();
       const timer = setTimeout(() => {
         setMode('idle');
         setAmount('');
@@ -123,25 +126,23 @@ export default function StakeActions({
       }, 3000);
       return () => clearTimeout(timer);
     }
-  }, [isConfirmed, onTransactionConfirmed, reset]);
+  }, [isConfirmed, onTransactionConfirmed, reset, refetchStake]);
 
-  /* ─── Not connected ──────────────────────────────────── */
   if (!isConnected) {
     return (
       <div className="stake-actions-connect">
-        Connect your wallet to stake, delegate, or unstake.
+        Connect your wallet to upvote or downvote this skill.
       </div>
     );
   }
 
-  /* ─── Wrong chain ────────────────────────────────────── */
   const isWrongChain = chainId !== monadTestnet.id;
 
   if (isWrongChain) {
     return (
       <div className="stake-actions">
         <div className="stake-actions-wrong-chain">
-          <span>Switch to Monad Testnet to interact with staking</span>
+          <span>Switch to Monad Testnet to vote</span>
           <button
             className="stake-btn switch-chain"
             onClick={() => switchChain({ chainId: monadTestnet.id })}
@@ -153,7 +154,6 @@ export default function StakeActions({
     );
   }
 
-  /* ─── Unbonding helpers ──────────────────────────────── */
   const unbondingTuple = unbondingData as
     | readonly [bigint, bigint]
     | undefined;
@@ -167,25 +167,41 @@ export default function StakeActions({
   const unbondingReady =
     hasUnbonding && Date.now() / 1000 >= unbondingAvailableAt;
 
-  /* ─── Submit handler ─────────────────────────────────── */
   const handleSubmit = () => {
     const val = Number(amount);
     if (!amount || isNaN(val) || val <= 0) return;
 
+    if (isWrongChain) {
+      switchChain({ chainId: monadTestnet.id });
+      return;
+    }
+
     feedIdRef.current = null;
 
-    if (mode === 'stake') {
-      // Use on-chain active status to pick the right contract function:
-      // - Not active on-chain → stakeAgent (first stake)
-      // - Active + we're publisher → increaseStake
-      // - Active + someone else is publisher → delegate
-      const functionName = !onChainActive
-        ? 'stakeAgent'
-        : isPublisher
-          ? 'increaseStake'
-          : 'delegate';
+    if (mode === 'upvote') {
+      // Pick the right contract call based on on-chain state:
+      //  - stakeAgent: agent has no active stake (first time, or deactivated after slash)
+      //  - delegate:   agent already active, we're adding vote weight
+      //  - increaseStake: agent active AND we are the publisher
+      let functionName: 'stakeAgent' | 'delegate' | 'increaseStake';
+      let txLabel: TxActivityType;
 
-      pendingTypeRef.current = !onChainActive ? 'Stake' : isPublisher ? 'Add Stake' : 'Delegate';
+      if (!onChainActive) {
+        functionName = 'stakeAgent';
+        txLabel = 'Stake';
+      } else if (
+        onChainPublisher &&
+        address &&
+        onChainPublisher.toLowerCase() === address.toLowerCase()
+      ) {
+        functionName = 'increaseStake';
+        txLabel = 'Stake';
+      } else {
+        functionName = 'delegate';
+        txLabel = 'Delegate';
+      }
+
+      pendingTypeRef.current = txLabel;
 
       writeContract({
         address: TRUST_STAKING_ADDRESS,
@@ -193,23 +209,16 @@ export default function StakeActions({
         functionName,
         args: [agentIdHash],
         value: parseEther(amount),
+        chainId: monadTestnet.id,
       });
-    } else if (mode === 'delegate') {
-      pendingTypeRef.current = 'Delegate';
-      writeContract({
-        address: TRUST_STAKING_ADDRESS,
-        abi: TRUST_STAKING_ABI,
-        functionName: 'delegate',
-        args: [agentIdHash],
-        value: parseEther(amount),
-      });
-    } else if (mode === 'unstake') {
+    } else if (mode === 'downvote') {
       pendingTypeRef.current = 'Unstake';
       writeContract({
         address: TRUST_STAKING_ADDRESS,
         abi: TRUST_STAKING_ABI,
         functionName: 'initiateUnbonding',
         args: [agentIdHash, parseEther(amount)],
+        chainId: monadTestnet.id,
       });
     }
   };
@@ -222,7 +231,6 @@ export default function StakeActions({
     pendingTypeRef.current = null;
   };
 
-  /* ─── Idle: show action buttons ──────────────────────── */
   if (mode === 'idle') {
     return (
       <div className="stake-actions">
@@ -231,38 +239,29 @@ export default function StakeActions({
             className="stake-btn primary"
             onClick={() => {
               reset();
-              setMode('stake');
+              setMode('upvote');
             }}
           >
-            {!isStaked ? 'Stake MON' : isPublisher ? 'Add Stake' : 'Stake MON'}
+            <ArrowUp className="w-3.5 h-3.5" style={{ marginRight: 4 }} />
+            Upvote
           </button>
-          {isStaked && (
-            <button
-              className="stake-btn delegate-btn"
-              onClick={() => {
-                reset();
-                setMode('delegate');
-              }}
-            >
-              Delegate
-            </button>
-          )}
           {isStaked && (
             <button
               className="stake-btn unstake-btn"
               onClick={() => {
                 reset();
-                setMode('unstake');
+                setMode('downvote');
               }}
             >
-              Unstake
+              <ArrowDown className="w-3.5 h-3.5" style={{ marginRight: 4 }} />
+              Downvote
             </button>
           )}
         </div>
 
         {hasUnbonding && (
           <div className="stake-unbonding-info">
-            <span className="unbonding-label">Pending Unbonding:</span>
+            <span className="unbonding-label">Pending withdrawal:</span>
             <span className="unbonding-amount">
               {Number(unbondingAmountEth).toFixed(4)} MON
             </span>
@@ -294,49 +293,43 @@ export default function StakeActions({
     );
   }
 
-  /* ─── Active form: stake / delegate / unstake ────────── */
   return (
     <div className="stake-actions">
       <div className="stake-form">
         <div className="stake-form-header">
           <h4 className="stake-form-title">
-            {mode === 'stake'
-              ? isStaked
-                ? 'Add Stake'
-                : 'Stake MON'
-              : mode === 'delegate'
-                ? 'Delegate MON'
-                : 'Initiate Unstake'}
+            {mode === 'upvote' ? (
+              <><ThumbsUp className="w-4 h-4" style={{ marginRight: 6 }} /> Upvote with MON</>
+            ) : (
+              <><ThumbsDown className="w-4 h-4" style={{ marginRight: 6 }} /> Downvote (unstake MON)</>
+            )}
           </h4>
           <button className="stake-form-cancel" onClick={handleCancel}>
             &times;
           </button>
         </div>
 
-        {/* Tier threshold selectors (stake / delegate only) */}
-        {(mode === 'stake' || mode === 'delegate') && (
+        {mode === 'upvote' && (
           <div className="stake-tiers">
-            {TIER_THRESHOLDS.map((tier) => (
+            {VOTE_AMOUNTS.map((tier) => (
               <div
                 key={tier.label}
-                className={`stake-tier-indicator ${Number(amount) >= Number(tier.min) ? 'active' : ''}`}
+                className={`stake-tier-indicator ${Number(amount) >= Number(tier.label) ? 'active' : ''}`}
                 style={{ '--tier-color': tier.color } as CSSProperties}
-                onClick={() => setAmount(tier.min)}
+                onClick={() => setAmount(tier.label)}
               >
-                <span className="tier-min">{tier.min} MON</span>
-                <span className="tier-label-text">{tier.label}</span>
+                <span className="tier-min">{tier.label} MON</span>
               </div>
             ))}
           </div>
         )}
 
-        {/* Amount input */}
         <div className="stake-input-row">
           <input
             type="number"
             className="stake-input"
             placeholder={
-              mode === 'unstake' ? 'Amount to unstake' : '0.00'
+              mode === 'downvote' ? 'Amount to remove' : '0.00'
             }
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
@@ -346,24 +339,31 @@ export default function StakeActions({
           <span className="stake-input-suffix">MON</span>
         </div>
 
-        {/* Unstake cooldown warning */}
-        {mode === 'unstake' && (
+        {mode === 'downvote' && (
           <div className="stake-unstake-warning">
-            7-day cooldown period before withdrawal. Your stake can still
-            be slashed during unbonding.
+            7-day cooldown before withdrawal. Your stake can still
+            be slashed during this period.
           </div>
         )}
 
-        {/* Status feedback */}
         {writeError && (
           <div className="stake-error">
-            {(writeError as Error).message?.includes('User rejected') ||
-            (writeError as Error).message?.includes('rejected')
-              ? 'Transaction rejected by user'
-              : (writeError as Error).message?.includes('exceeds defined limit') ||
-                (writeError as Error).message?.includes('reverted')
-                ? 'Transaction would fail on-chain. The agent may already be staked or you may lack permission.'
-                : (writeError as Error).message?.slice(0, 140)}
+            {(() => {
+              const msg = (writeError as Error).message ?? '';
+              if (msg.includes('User rejected') || msg.includes('rejected'))
+                return 'Transaction rejected by user';
+              if (msg.includes('Agent not active'))
+                return 'Agent not active on-chain — try again (will re-stake automatically).';
+              if (msg.includes('Already staked'))
+                return 'Agent already staked — refreshing state...';
+              if (msg.includes('Below minimum'))
+                return 'Amount below minimum (0.01 MON).';
+              if (msg.includes('insufficient') || msg.includes('exceeds balance'))
+                return 'Insufficient MON balance.';
+              if (msg.includes('exceeds defined limit') || msg.includes('reverted'))
+                return 'Transaction reverted. Check your balance and try again.';
+              return msg.slice(0, 140);
+            })()}
           </div>
         )}
         {isPending && (
@@ -386,7 +386,20 @@ export default function StakeActions({
         )}
         {isConfirmed && txHash && (
           <div className="stake-status confirmed">
-            Transaction confirmed!
+            {mode === 'upvote' ? 'Upvote' : 'Downvote'} confirmed!
+            <a
+              href={`https://testnet.monadexplorer.com/tx/${txHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="stake-tx-link"
+            >
+              {txHash.slice(0, 6)}...{txHash.slice(-4)} ↗
+            </a>
+          </div>
+        )}
+        {receiptError && txHash && (
+          <div className="stake-status confirming">
+            Transaction submitted — confirmation timed out. Check explorer:
             <a
               href={`https://testnet.monadexplorer.com/tx/${txHash}`}
               target="_blank"
@@ -398,7 +411,6 @@ export default function StakeActions({
           </div>
         )}
 
-        {/* Form buttons */}
         <div className="stake-form-actions">
           <button className="stake-btn secondary" onClick={handleCancel}>
             Cancel
@@ -413,13 +425,13 @@ export default function StakeActions({
               isConfirming
             }
           >
-            {isPending || isConfirming
+            {isPending
               ? 'Processing\u2026'
-              : mode === 'stake'
-                ? 'Stake'
-                : mode === 'delegate'
-                  ? 'Delegate'
-                  : 'Begin Unstake'}
+              : isConfirming
+                ? 'Confirming\u2026'
+                : mode === 'upvote'
+                  ? 'Upvote'
+                  : 'Downvote'}
           </button>
         </div>
       </div>

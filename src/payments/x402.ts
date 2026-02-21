@@ -1,14 +1,17 @@
 /**
  * Trusted ClawMon — x402 Micropayment Gateway (Phase 9)
  *
- * Implements the x402 payment flow:
+ * Manages skill pricing and records verified on-chain payments:
  *   1. Skill pricing registration (trust-tier influenced)
- *   2. Payment processing with fee distribution
- *   3. Access gateway that checks payment before granting skill access
- *   4. Payment history as a trust signal for the scoring engine
- *   5. Revenue analytics (per-skill, per-tier, aggregate)
+ *   2. Recording verified on-chain payments from SkillPaywall contract
+ *   3. Payment history as a trust signal for the scoring engine
+ *   4. Revenue analytics (per-skill, per-tier, aggregate)
  *
- * Fee split per the spec:
+ * Payments are settled on-chain via the SkillPaywall contract.
+ * The caller's wallet calls payForSkill(), then the server verifies the
+ * tx receipt (via x402-protocol.ts) and records it here.
+ *
+ * Fee split (enforced by SkillPaywall.sol):
  *   80% → Skill publisher
  *   10% → Protocol treasury
  *   10% → Insurance pool
@@ -16,7 +19,6 @@
 
 import { ethers } from 'ethers';
 import type { TrustTier } from '../scoring/types.js';
-import { scoreToTier } from '../scoring/types.js';
 import {
   DEFAULT_PAYMENT_CONFIG,
   DEFAULT_TIER_PRICING,
@@ -34,7 +36,7 @@ import type {
   PaymentActivity,
   PaymentTrustSignal,
 } from './types.js';
-import { getProvider as getMonadProvider } from '../monad/client.js';
+import { getProvider as getMonadProvider, getSigner as getMonadSigner } from '../monad/client.js';
 
 // ---------------------------------------------------------------------------
 // On-Chain Contract (SkillPaywall.sol)
@@ -49,9 +51,13 @@ const PAYWALL_ABI = [
   'function getPayment(uint256 paymentId) view returns (uint256 id, bytes32 agentId, address caller, address publisher, uint256 amount, uint256 publisherPayout, uint256 protocolPayout, uint256 insurancePayout, uint256 timestamp)',
   'function paymentIds(uint256 index) view returns (uint256)',
   'function registeredSkills(uint256 index) view returns (bytes32)',
+  'function registerSkill(bytes32 agentId, address publisher, uint256 pricePerCall, uint8 trustTier)',
+  'function owner() view returns (address)',
 ];
 
 const PAYWALL_ADDRESS = process.env.PAYWALL_CONTRACT_ADDRESS || '';
+
+const MIN_PAYMENT = ethers.parseEther('0.0001');
 
 let _paywallContract: ethers.Contract | null = null;
 function getPaywallContract(): ethers.Contract | null {
@@ -60,6 +66,19 @@ function getPaywallContract(): ethers.Contract | null {
     _paywallContract = new ethers.Contract(PAYWALL_ADDRESS, PAYWALL_ABI, getMonadProvider());
   }
   return _paywallContract;
+}
+
+let _paywallWriteContract: ethers.Contract | null = null;
+function getPaywallWriteContract(): ethers.Contract | null {
+  if (!PAYWALL_ADDRESS) return null;
+  try {
+    if (!_paywallWriteContract) {
+      _paywallWriteContract = new ethers.Contract(PAYWALL_ADDRESS, PAYWALL_ABI, getMonadSigner());
+    }
+    return _paywallWriteContract;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -183,6 +202,8 @@ let receiptIdCounter = 0;
 
 /**
  * Register a skill for x402 payments with trust-tier-influenced pricing.
+ * Also registers the skill on the SkillPaywall contract if configured and
+ * the publisher is a valid ETH address.
  */
 export function registerSkillPricing(
   agentId: string,
@@ -212,7 +233,66 @@ export function registerSkillPricing(
   };
 
   skillProfiles.set(agentId, profile);
+
+  // Fire-and-forget on-chain registration.
+  // Use the operator wallet as a fallback publisher for skills whose publisher
+  // is a GitHub username or other non-ETH identifier.
+  registerSkillOnChain(agentId, publisher, trustTier).catch(() => {});
+
   return profile;
+}
+
+/**
+ * Register a skill on the SkillPaywall contract (on-chain).
+ * Only succeeds when the server's MONAD_PRIVATE_KEY is the contract owner.
+ *
+ * If the publisher is not a valid ETH address the operator wallet is used
+ * as a fallback so the payForSkill flow still works for every skill.
+ */
+export async function registerSkillOnChain(
+  agentId: string,
+  publisher: string,
+  trustTier: TrustTier,
+): Promise<boolean> {
+  const contract = getPaywallWriteContract();
+  if (!contract) return false;
+
+  const agentIdHash = ethers.id(agentId);
+  const tierNum = TIER_TO_NUMERIC[trustTier] ?? 5;
+  const pricePerCall = ethers.parseEther('0.001');
+
+  // Fallback: use operator address when publisher isn't an ETH address
+  const isEthAddress = /^0x[0-9a-fA-F]{40}$/.test(publisher);
+  let onChainPublisher = publisher;
+  if (!isEthAddress) {
+    try {
+      const runner = contract.runner as ethers.Signer | undefined;
+      onChainPublisher = runner?.getAddress ? await runner.getAddress() : '';
+    } catch {
+      return false;
+    }
+    if (!onChainPublisher) return false;
+  }
+
+  // Check if already registered
+  try {
+    const pricing = await contract.getSkillPricing(agentIdHash);
+    if (pricing[2]) return true; // already active
+  } catch {
+    // getSkillPricing reverts for unregistered skills — expected
+  }
+
+  try {
+    const tx = await contract.registerSkill(agentIdHash, onChainPublisher, pricePerCall, tierNum);
+    await tx.wait();
+    console.log(`  [paywall] Registered on-chain: ${agentId} → ${onChainPublisher.slice(0, 10)}... tier=${trustTier}`);
+    return true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('Already registered')) return true;
+    console.log(`  [paywall] On-chain registration failed for ${agentId}: ${msg.slice(0, 80)}`);
+    return false;
+  }
 }
 
 /**
@@ -240,89 +320,90 @@ export function updateSkillTier(
 // ---------------------------------------------------------------------------
 
 /**
- * Process an x402 micropayment for a skill invocation.
- * Returns a receipt with fee distribution breakdown.
+ * Record a verified on-chain payment in the in-memory cache.
+ *
+ * This does NOT initiate a payment -- it records one that has already been
+ * verified on-chain (via `verifyPaymentTx` from x402-protocol.ts). Call this
+ * after the caller's wallet has submitted a `payForSkill` transaction to the
+ * SkillPaywall contract and the server has confirmed the tx receipt.
  */
-export function processSkillPayment(
-  agentId: string,
-  caller: string,
-  config: PaymentConfig = DEFAULT_PAYMENT_CONFIG,
-): x402Receipt | null {
-  const profile = skillProfiles.get(agentId);
-  if (!profile || !profile.active) return null;
-
-  const amount = profile.effectivePriceEth;
-  const publisherPayout = amount * config.publisherShare;
-  const protocolPayout = amount * config.protocolShare;
-  const insurancePayout = amount * config.insuranceShare;
+export function recordVerifiedPayment(params: {
+  agentId: string;
+  caller: string;
+  txHash: string;
+  amountEth: number;
+  publisherPayoutEth: number;
+  protocolPayoutEth: number;
+  insurancePayoutEth: number;
+  onChainPaymentId: number;
+  blockTimestamp: number;
+}): x402Receipt {
+  const profile = skillProfiles.get(params.agentId);
+  const trustTier = profile?.trustTier ?? ('C' as TrustTier);
 
   const receipt: x402Receipt = {
-    paymentId: `x402-${++receiptIdCounter}`,
-    agentId,
-    caller,
-    publisher: profile.publisher,
-    amount,
-    publisherPayout,
-    protocolPayout,
-    insurancePayout,
-    trustTier: profile.trustTier,
-    effectivePrice: amount,
-    timestamp: Date.now(),
+    paymentId: `chain-${params.onChainPaymentId}`,
+    agentId: params.agentId,
+    caller: params.caller,
+    publisher: profile?.publisher ?? '',
+    amount: params.amountEth,
+    publisherPayout: params.publisherPayoutEth,
+    protocolPayout: params.protocolPayoutEth,
+    insurancePayout: params.insurancePayoutEth,
+    trustTier,
+    effectivePrice: params.amountEth,
+    timestamp: params.blockTimestamp * 1000,
+    txHash: params.txHash,
   };
 
-  // Update profile counters
-  profile.totalPayments++;
-  profile.totalRevenueEth += amount;
-  profile.publisherRevenueEth += publisherPayout;
-  profile.protocolRevenueEth += protocolPayout;
-  profile.insuranceRevenueEth += insurancePayout;
-  profile.lastPaymentTime = receipt.timestamp;
+  // Update profile counters if the skill is registered
+  if (profile) {
+    profile.totalPayments++;
+    profile.totalRevenueEth += params.amountEth;
+    profile.publisherRevenueEth += params.publisherPayoutEth;
+    profile.protocolRevenueEth += params.protocolPayoutEth;
+    profile.insuranceRevenueEth += params.insurancePayoutEth;
+    profile.lastPaymentTime = receipt.timestamp;
 
-  // Compute payment velocity (payments in last 24h)
-  const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-  const recentPayments = allReceipts.filter(
-    r => r.agentId === agentId && r.timestamp >= oneDayAgo,
-  ).length + 1;
-  profile.paymentVelocity = recentPayments / 24;
+    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const recentPayments = allReceipts.filter(
+      r => r.agentId === params.agentId && r.timestamp >= oneDayAgo,
+    ).length + 1;
+    profile.paymentVelocity = recentPayments / 24;
+  }
 
-  // Store receipt
   allReceipts.push(receipt);
 
-  // Update activity feed (keep last 100)
   activityFeed.push({
     paymentId: receipt.paymentId,
-    agentId,
-    caller,
-    amount,
-    trustTier: profile.trustTier,
+    agentId: params.agentId,
+    caller: params.caller,
+    amount: params.amountEth,
+    trustTier,
     timestamp: receipt.timestamp,
   });
   if (activityFeed.length > 100) {
     activityFeed.splice(0, activityFeed.length - 100);
   }
 
-  // Track caller history
-  if (!callerHistory.has(caller)) {
-    callerHistory.set(caller, new Set());
+  if (!callerHistory.has(params.caller)) {
+    callerHistory.set(params.caller, new Set());
   }
-  callerHistory.get(caller)!.add(agentId);
+  callerHistory.get(params.caller)!.add(params.agentId);
 
   return receipt;
 }
 
 // ---------------------------------------------------------------------------
-// Access Gateway
+// Pricing Queries
 // ---------------------------------------------------------------------------
 
 /**
- * Check whether a caller has access to invoke a skill.
- * In a real x402 implementation, this would validate an HTTP 402 payment header.
- * For the demo, we process payment inline and return the gateway result.
+ * Get the x402 payment requirements for a skill.
+ * Returns pricing info so the caller's wallet can submit `payForSkill` on-chain.
  */
-export function checkPaymentAccess(
+export function getPaymentRequirements(
   agentId: string,
-  caller: string,
-  config: PaymentConfig = DEFAULT_PAYMENT_CONFIG,
 ): PaymentGatewayResult {
   const profile = skillProfiles.get(agentId);
 
@@ -346,37 +427,13 @@ export function checkPaymentAccess(
     };
   }
 
-  // Budget tier skills with very low effective price are considered free
   const isFree = profile.effectivePriceEth < 0.0001;
 
-  if (isFree) {
-    return {
-      accessGranted: true,
-      effectivePriceEth: 0,
-      trustTier: profile.trustTier,
-      isFree: true,
-    };
-  }
-
-  // Process payment
-  const receipt = processSkillPayment(agentId, caller, config);
-
-  if (!receipt) {
-    return {
-      accessGranted: false,
-      denyReason: 'Payment processing failed',
-      effectivePriceEth: profile.effectivePriceEth,
-      trustTier: profile.trustTier,
-      isFree: false,
-    };
-  }
-
   return {
-    accessGranted: true,
-    effectivePriceEth: receipt.effectivePrice,
+    accessGranted: false,
+    effectivePriceEth: isFree ? 0 : profile.effectivePriceEth,
     trustTier: profile.trustTier,
-    isFree: false,
-    receipt,
+    isFree,
   };
 }
 
@@ -566,84 +623,3 @@ export function hasPaymentHistory(caller: string): boolean {
   return callerHistory.has(caller) && callerHistory.get(caller)!.size > 0;
 }
 
-// ---------------------------------------------------------------------------
-// Seed Simulated Payment Data
-// ---------------------------------------------------------------------------
-
-/**
- * Generate simulated payment history for all registered skills.
- * Higher-tier skills get more payments, reflecting organic usage patterns.
- */
-export function seedSimulatedPayments(
-  seeds: Array<{
-    agentId: string;
-    publisher: string;
-    tier: TrustTier;
-    feedbackCount: number;
-    flagged: boolean;
-    isSybil: boolean;
-    category: string;
-  }>,
-  config: PaymentConfig = DEFAULT_PAYMENT_CONFIG,
-): void {
-  const baseTimestamp = Date.now() - 7 * 24 * 60 * 60 * 1000;
-
-  for (const seed of seeds) {
-    // Register skill pricing
-    registerSkillPricing(seed.agentId, seed.publisher, seed.tier, config);
-
-    // Flagged/sybil skills get very few or no payments
-    if (seed.flagged || seed.isSybil) {
-      const count = Math.floor(Math.random() * 3);
-      for (let i = 0; i < count; i++) {
-        const caller = `0x${seed.agentId.slice(0, 4)}caller${i}`;
-        const receipt = processSkillPayment(seed.agentId, caller, config);
-        if (receipt) {
-          (receipt as any).timestamp = baseTimestamp + Math.random() * 2 * 24 * 60 * 60 * 1000;
-        }
-      }
-      continue;
-    }
-
-    // Payment count scales with tier and feedback count
-    let paymentMultiplier = 1;
-    switch (seed.tier) {
-      case 'AAA': case 'AA': paymentMultiplier = 8; break;
-      case 'A': paymentMultiplier = 6; break;
-      case 'BBB': paymentMultiplier = 4; break;
-      case 'BB': paymentMultiplier = 3; break;
-      case 'B': paymentMultiplier = 2; break;
-      default: paymentMultiplier = 1; break;
-    }
-
-    const baseCount = Math.max(1, Math.floor(seed.feedbackCount * 0.5));
-    const paymentCount = Math.min(80, Math.floor(baseCount * paymentMultiplier * (0.5 + Math.random())));
-
-    // Generate callers (some repeat)
-    const uniqueCallerCount = Math.max(1, Math.floor(paymentCount * 0.4));
-    const callers: string[] = [];
-    for (let i = 0; i < uniqueCallerCount; i++) {
-      callers.push(`0x${Math.random().toString(16).slice(2, 10)}${i.toString(16).padStart(4, '0')}`);
-    }
-
-    for (let i = 0; i < paymentCount; i++) {
-      const caller = callers[Math.floor(Math.random() * callers.length)];
-      const receipt = processSkillPayment(seed.agentId, caller, config);
-      if (receipt) {
-        // Backdate the timestamp to spread over 7 days
-        const offset = Math.random() * 7 * 24 * 60 * 60 * 1000;
-        (receipt as any).timestamp = baseTimestamp + offset;
-      }
-    }
-
-    // Recalculate velocity based on simulated timestamps
-    const profile = skillProfiles.get(seed.agentId);
-    if (profile) {
-      const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-      const recentCount = allReceipts.filter(
-        r => r.agentId === seed.agentId && r.timestamp >= oneDayAgo,
-      ).length;
-      profile.paymentVelocity = recentCount / 24;
-    }
-  }
-}

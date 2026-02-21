@@ -1,19 +1,25 @@
-import { Gem, ShieldCheck, Link2, AlertTriangle, Users } from 'lucide-react';
+import { Gem, ShieldCheck, Link2, AlertTriangle, Users, Wallet, Zap } from 'lucide-react';
 import TierBadge from './TierBadge';
-import type { AgentSummary } from '../types';
+import BoostGiftButton from './BoostGiftButton';
+import type { AgentSummary, BoostStatus } from '../types';
+
+const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
 interface SkillCardProps {
   agent: AgentSummary;
+  boost?: BoostStatus;
   onClick: () => void;
+  onBoostClick?: () => void;
   isUpdated?: boolean;
 }
 
-export default function SkillCard({ agent, onClick, isUpdated }: SkillCardProps) {
+export default function SkillCard({ agent, boost, onClick, onBoostClick, isUpdated }: SkillCardProps) {
   const scoreColor = agent.hardenedScore >= 75 ? 'var(--success)'
     : agent.hardenedScore >= 50 ? 'var(--warning)'
     : 'var(--danger)';
 
   const scorePercent = Math.min(100, Math.max(0, agent.hardenedScore));
+  const isRegistered = ETH_ADDRESS_RE.test(agent.publisher);
 
   return (
     <div
@@ -29,7 +35,12 @@ export default function SkillCard({ agent, onClick, isUpdated }: SkillCardProps)
           <span className="skill-card-name">{agent.name}</span>
           <span className="skill-card-publisher">{agent.publisher}</span>
         </div>
-        <TierBadge tier={agent.hardenedTier} size="md" />
+        <div className="skill-card-header-right">
+          {onBoostClick && (
+            <BoostGiftButton onBoostClick={onBoostClick} />
+          )}
+          <TierBadge tier={agent.hardenedTier} size="md" />
+        </div>
       </div>
 
       <p className="skill-card-desc">{agent.description}</p>
@@ -38,7 +49,7 @@ export default function SkillCard({ agent, onClick, isUpdated }: SkillCardProps)
         <div className="skill-card-score">
           Score <strong>{agent.hardenedScore.toFixed(1)}</strong>
         </div>
-        <span className="skill-card-reviews">{agent.feedbackCount} reviews</span>
+        <span className="skill-card-reviews">{agent.feedbackCount} signals</span>
         {agent.scoreDelta !== 0 && (
           <span className={`skill-card-delta ${agent.scoreDelta > 0 ? 'negative' : 'positive'}`}>
             {agent.scoreDelta > 0 ? '-' : '+'}{Math.abs(agent.scoreDelta).toFixed(1)}
@@ -47,22 +58,38 @@ export default function SkillCard({ agent, onClick, isUpdated }: SkillCardProps)
       </div>
 
       <div className="skill-card-badges">
+        {isRegistered ? (
+          <span className="skill-card-badge onchain">
+            <Wallet className="badge-icon" />
+            Registered
+          </span>
+        ) : (
+          <span className="skill-card-badge" style={{ opacity: 0.5 }}>
+            No bond
+          </span>
+        )}
         {agent.isStaked && agent.totalStakeEth > 0 && (
           <span className="skill-card-badge stake">
             <Gem className="badge-icon" />
             {agent.totalStakeEth.toFixed(3)} MON
           </span>
         )}
+        {boost?.configured && boost.exists && (
+          <span className={`skill-card-badge boost level-${Math.max(0, Math.min(3, boost.trustLevel))}`}>
+            <Zap className="badge-icon" />
+            Boost L{boost.trustLevel}
+          </span>
+        )}
         {agent.teeTier3Active && (
           <span className="skill-card-badge tee">
             <ShieldCheck className="badge-icon" />
-            TEE verified
+            TEE attested
           </span>
         )}
         {agent.attestationStatus === 'active' && (
           <span className="skill-card-badge onchain">
             <Link2 className="badge-icon" />
-            On-chain
+            On-chain proof
           </span>
         )}
         {agent.flagged && (

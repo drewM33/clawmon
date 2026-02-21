@@ -1,5 +1,5 @@
 import { http, createConfig } from 'wagmi';
-import { mainnet } from 'wagmi/chains';
+import { mainnet, baseSepolia } from 'wagmi/chains';
 import { defineChain } from 'viem';
 import { injected, walletConnect } from 'wagmi/connectors';
 import {
@@ -33,6 +33,8 @@ export const monadTestnet = defineChain({
   testnet: true,
 });
 
+export { baseSepolia };
+
 const connectors = [
   injected(),
   ...(WALLETCONNECT_PROJECT_ID
@@ -51,10 +53,11 @@ const connectors = [
 ];
 
 export const wagmiConfig = createConfig({
-  chains: [monadTestnet, mainnet],
+  chains: [monadTestnet, baseSepolia, mainnet],
   connectors,
   transports: {
     [monadTestnet.id]: http(MONAD_RPC_URL || undefined),
+    [baseSepolia.id]: http(),
     [mainnet.id]: http(),
   },
 });

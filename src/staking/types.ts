@@ -3,6 +3,9 @@
  *
  * TypeScript representations of the on-chain TrustStaking contract state.
  * Used by the integration layer, scoring engine, and dashboard API.
+ *
+ * NOTE: Fields suffixed with "Eth" (e.g. stakeAmountEth) use ethers.js
+ * 18-decimal formatting conventions. The actual token is MON (native Monad).
  */
 
 // ---------------------------------------------------------------------------
@@ -33,16 +36,16 @@ export const STAKE_TIER_LABELS: Record<StakeTier, string> = {
 export interface AgentStakeInfo {
   agentId: string;           // human-readable (e.g. "gmail-integration")
   agentIdHash: string;       // bytes32 keccak hash
-  publisher: string;         // Ethereum address
-  stakeAmount: string;       // ETH in wei (as string for BigInt safety)
-  delegatedStake: string;    // ETH in wei
-  totalStake: string;        // ETH in wei
+  publisher: string;         // wallet address
+  stakeAmount: string;       // MON in wei (as string for BigInt safety)
+  delegatedStake: string;    // MON in wei
+  totalStake: string;        // MON in wei
   stakedAt: number;          // unix timestamp (seconds)
   lastSlashTime: number;     // unix timestamp (seconds), 0 if never slashed
   active: boolean;
   tier: StakeTier;
-  // Computed fields (not from contract)
-  stakeAmountEth: number;    // ETH as float for display
+  // Computed fields (not from contract) — "Eth" suffix = 18-decimal float (MON)
+  stakeAmountEth: number;
   delegatedStakeEth: number;
   totalStakeEth: number;
 }
@@ -55,10 +58,10 @@ export interface AgentStakeInfo {
 export interface SlashRecord {
   agentId: string;           // human-readable
   agentIdHash: string;       // bytes32
-  amount: string;            // ETH in wei
-  amountEth: number;         // ETH as float
+  amount: string;            // MON in wei
+  amountEth: number;         // MON as float
   reason: string;
-  reporter: string;          // Ethereum address
+  reporter: string;          // wallet address
   timestamp: number;         // unix timestamp (seconds)
 }
 
@@ -129,16 +132,16 @@ export const CLAIM_STATUS_LABELS: Record<ClaimStatus, string> = {
 /** A single insurance claim */
 export interface InsuranceClaim {
   id: number;
-  claimant: string;           // Ethereum address
+  claimant: string;           // wallet address
   agentId: string;            // human-readable skill name
   agentIdHash: string;        // bytes32 keccak hash
   amount: string;             // claimed loss in wei
-  amountEth: number;          // claimed loss in ETH (for display)
+  amountEth: number;          // claimed loss in MON (for display)
   evidenceHash: string;       // evidence reference
   submittedAt: number;        // unix timestamp (seconds)
   status: ClaimStatus;
   payoutAmount: string;       // actual payout in wei (0 if not paid)
-  payoutAmountEth: number;    // actual payout in ETH
+  payoutAmountEth: number;    // actual payout in MON
   paidAt: number;             // unix timestamp (seconds), 0 if not paid
   approveVotes: number;
   rejectVotes: number;
@@ -170,7 +173,7 @@ export interface InsuranceStats {
   rejectedClaims: number;
   paidClaims: number;
   avgPayoutEth: number;
-  coverageRatio: number;      // poolBalance / totalStaked — how much of staked value is insured
+  coverageRatio: number;      // poolBalance / totalStaked — how much of staked MON is insured
 }
 
 /** Insurance API response for single agent */
@@ -251,27 +254,29 @@ export interface TenureInfo {
 // ---------------------------------------------------------------------------
 
 export const STAKING_CONSTANTS = {
-  MIN_STAKE_WEI: '10000000000000000',   // 0.01 ETH
-  MIN_STAKE_ETH: 0.01,
-  TIER2_MID_WEI: '50000000000000000',   // 0.05 ETH
-  TIER2_MID_ETH: 0.05,
-  TIER2_HIGH_WEI: '250000000000000000', // 0.25 ETH
-  TIER2_HIGH_ETH: 0.25,
+  MIN_STAKE_WEI: '150000000000000000',  // 0.15 MON — raised to make attacks unprofitable within ~100-call detection window
+  MIN_STAKE_ETH: 0.15,
+  TIER2_MID_WEI: '250000000000000000',  // 0.25 MON
+  TIER2_MID_ETH: 0.25,
+  TIER2_HIGH_WEI: '500000000000000000', // 0.50 MON
+  TIER2_HIGH_ETH: 0.50,
   UNBONDING_PERIOD_SECONDS: 7 * 24 * 60 * 60,
   REPORTER_BPS: 4000,
   INSURANCE_BPS: 3000,
   TREASURY_BPS: 2000,
   DELEGATOR_REVENUE_BPS: 2000,          // 20 % of publisher share to delegators
+  CHALLENGE_BOND_BPS: 1000,             // 10 % of target's stake — proportional to deter griefing
 } as const;
 
 export const INSURANCE_CONSTANTS = {
   MAX_PAYOUT_BPS: 5000,                // 50 % of pool per claim
-  MIN_CLAIM_WEI: '1000000000000000',   // 0.001 ETH
+  MIN_CLAIM_WEI: '1000000000000000',   // 0.001 MON
   MIN_CLAIM_ETH: 0.001,
   QUORUM: 3,
   YIELD_CAP_BPS: 1000,                 // 10 % of surplus per epoch
   YIELD_EPOCH_SECONDS: 30 * 24 * 60 * 60, // 30 days
-  SURPLUS_THRESHOLD_ETH: 1.0,          // default 1 ETH (testnet)
+  SURPLUS_THRESHOLD_ETH: 1.0,          // default 1 MON (testnet)
+  POOL_CAP_BPS: 5000,                  // 50 % of totalStaked — scales with ecosystem instead of fixed cap
 } as const;
 
 export const TENURE_CONSTANTS = {
