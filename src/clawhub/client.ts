@@ -76,6 +76,7 @@ const SEARCH_CATEGORIES = [
 
 /**
  * Resolve the path to the clawhub CLI binary.
+ * Checks: global PATH first, then local node_modules/.bin/ (for Render / CI).
  */
 export async function resolveCli(): Promise<string> {
   try {
@@ -87,7 +88,28 @@ export async function resolveCli(): Promise<string> {
   } catch {
     // not found on PATH
   }
-  throw new Error('clawhub CLI not found. Install with: npm i -g clawhub');
+
+  // Check local node_modules/.bin/ (installed as project dependency)
+  const { fileURLToPath } = await import('node:url');
+  const { dirname, resolve } = await import('node:path');
+  const { access } = await import('node:fs/promises');
+
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    resolve(thisDir, '../../node_modules/.bin/clawhub'),
+    resolve(process.cwd(), 'node_modules/.bin/clawhub'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      // not at this path
+    }
+  }
+
+  throw new Error('clawhub CLI not found. Install with: npm i clawhub');
 }
 
 // ---------------------------------------------------------------------------
