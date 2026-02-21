@@ -65,6 +65,9 @@ import { DEFAULT_MITIGATION_CONFIG, DISABLED_MITIGATION_CONFIG } from './mitigat
 import type { MitigationConfig } from './mitigations/types.js';
 import { detectMutualFeedback, detectSybilClusters } from './mitigations/graph.js';
 import { detectVelocitySpikes, detectNewSubmitterBurst } from './mitigations/velocity.js';
+import { computeSybilRank, DEFAULT_SYBILRANK_CONFIG } from './mitigations/sybilrank.js';
+import { detectJaccardClusters, DEFAULT_JACCARD_CONFIG } from './mitigations/jaccard.js';
+import { detectTemporalCorrelation, DEFAULT_TEMPORAL_CONFIG } from './mitigations/temporal-correlation.js';
 import { scoreToTier, CREDIBILITY_WEIGHTS, REPUTATION_TIERS } from './scoring/types.js';
 import type { Feedback, RegisterMessage, TrustTier, CredibilityTier, ReputationTier } from './scoring/types.js';
 import {
@@ -360,6 +363,9 @@ interface AgentDetailResponse extends AgentResponse {
     temporalDecay: number;
     newSubmitter: number;
     anomalyBurst: number;
+    sybilRankFlagged: number;
+    jaccardCoordinated: number;
+    temporalCorrelation: number;
   };
   usageTierBreakdown: UsageTierBreakdown;
   feedbackAuthPolicy: string;
@@ -374,6 +380,9 @@ interface GraphNode {
   isSybil: boolean;
   isFlagged: boolean;
   feedbackCount?: number;
+  sybilRankTrust?: number;
+  jaccardFlagged?: boolean;
+  temporalFlagged?: boolean;
 }
 
 interface GraphEdge {
@@ -387,6 +396,24 @@ interface GraphResponse {
   nodes: GraphNode[];
   edges: GraphEdge[];
   sybilClusters: string[][];
+  sybilAnalysis: {
+    sybilRank: {
+      nodeCount: number;
+      edgeCount: number;
+      iterationsRun: number;
+      flaggedCount: number;
+    };
+    jaccard: {
+      clusterCount: number;
+      flaggedCount: number;
+      clusters: Array<{ addresses: string[]; commonAgents: string[]; avgSimilarity: number }>;
+    };
+    temporal: {
+      lockstepPairCount: number;
+      regularAddressCount: number;
+      flaggedCount: number;
+    };
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -699,7 +726,7 @@ app.get('/api/agents/:id', (req, res) => {
 
   const agentFb = allFeedback.filter(f => f.agentId === agentId);
 
-  // Compute mitigation flags
+  // Compute mitigation flags (original)
   const mutualPairs = detectMutualFeedback(allFeedback);
   const mutualIds = new Set<string>();
   for (const pair of mutualPairs) {
@@ -709,11 +736,19 @@ app.get('/api/agents/:id', (req, res) => {
   const velocityFlagged = detectVelocitySpikes(agentFb, 10, 60_000);
   const anomalyFlagged = detectNewSubmitterBurst(agentFb, allFeedback, 5, 60_000);
 
+  // Genuine sybil detection
+  const sybilRankResult = computeSybilRank(allFeedback, DEFAULT_SYBILRANK_CONFIG);
+  const jaccardResult = detectJaccardClusters(allFeedback, DEFAULT_JACCARD_CONFIG);
+  const temporalResult = detectTemporalCorrelation(allFeedback, DEFAULT_TEMPORAL_CONFIG);
+
   let sybilMutual = 0;
   let velocityBurst = 0;
   let temporalDecay = 0;
   let newSubmitter = 0;
   let anomalyBurst = 0;
+  let sybilRankFlagged = 0;
+  let jaccardCoordinated = 0;
+  let temporalCorrelation = 0;
 
   const now = Date.now();
   const firstSeenMap = new Map<string, number>();
@@ -736,6 +771,9 @@ app.get('/api/agents/:id', (req, res) => {
     if (Math.pow(0.5, ageMs / 86_400_000) < 0.5) temporalDecay++;
     if (newSubmitters.has(fb.clientAddress)) newSubmitter++;
     if (anomalyFlagged.has(fb.id)) anomalyBurst++;
+    if (sybilRankResult.flaggedAddresses.has(fb.clientAddress)) sybilRankFlagged++;
+    if (jaccardResult.flaggedAddresses.has(fb.clientAddress)) jaccardCoordinated++;
+    if (temporalResult.flaggedAddresses.has(fb.clientAddress)) temporalCorrelation++;
   }
 
   const identity = getCachedIdentities().get(agentId);
@@ -769,6 +807,9 @@ app.get('/api/agents/:id', (req, res) => {
       temporalDecay,
       newSubmitter,
       anomalyBurst,
+      sybilRankFlagged,
+      jaccardCoordinated,
+      temporalCorrelation,
     },
     usageTierBreakdown,
     feedbackAuthPolicy: identity?.feedbackAuthPolicy ?? 'unknown',
@@ -791,11 +832,14 @@ app.get('/api/graph', (_req, res) => {
     mutualEdgeKeys.add([pair.addressA, pair.addressB].sort().join('::'));
   }
 
+  // Run genuine sybil detection algorithms
+  const sybilRankResult = computeSybilRank(allFeedback, DEFAULT_SYBILRANK_CONFIG);
+  const jaccardResult = detectJaccardClusters(allFeedback, DEFAULT_JACCARD_CONFIG);
+  const temporalResult = detectTemporalCorrelation(allFeedback, DEFAULT_TEMPORAL_CONFIG);
+
   const nodeMap = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
-  const edgeSeen = new Set<string>();
 
-  const naiveSummaries = computeAllSummaries(allFeedback);
   const hardenedSummaries = computeAllHardenedSummaries(allFeedback, DEFAULT_MITIGATION_CONFIG);
 
   // Add agent nodes
@@ -807,9 +851,12 @@ app.get('/api/graph', (_req, res) => {
       label: identity.name,
       tier: hardened?.tier,
       score: hardened?.summaryValue,
-      isSybil: cachedSybilAddrs.has(agentId),
-      isFlagged: false,
+      isSybil: cachedSybilAddrs.has(agentId) || sybilRankResult.flaggedAddresses.has(agentId),
+      isFlagged: jaccardResult.flaggedAddresses.has(agentId) || temporalResult.flaggedAddresses.has(agentId),
       feedbackCount: hardened?.feedbackCount,
+      sybilRankTrust: sybilRankResult.trustScores.get(agentId),
+      jaccardFlagged: jaccardResult.flaggedAddresses.has(agentId),
+      temporalFlagged: temporalResult.flaggedAddresses.has(agentId),
     });
   }
 
@@ -830,8 +877,11 @@ app.get('/api/graph', (_req, res) => {
         id: fb.clientAddress,
         type: 'reviewer',
         label: fb.clientAddress,
-        isSybil: cachedSybilAddrs.has(fb.clientAddress),
-        isFlagged: false,
+        isSybil: cachedSybilAddrs.has(fb.clientAddress) || sybilRankResult.flaggedAddresses.has(fb.clientAddress),
+        isFlagged: jaccardResult.flaggedAddresses.has(fb.clientAddress) || temporalResult.flaggedAddresses.has(fb.clientAddress),
+        sybilRankTrust: sybilRankResult.trustScores.get(fb.clientAddress),
+        jaccardFlagged: jaccardResult.flaggedAddresses.has(fb.clientAddress),
+        temporalFlagged: temporalResult.flaggedAddresses.has(fb.clientAddress),
       });
     }
   }
@@ -851,9 +901,131 @@ app.get('/api/graph', (_req, res) => {
     nodes: Array.from(nodeMap.values()),
     edges,
     sybilClusters: sybilClusters.map(c => Array.from(c)),
+    sybilAnalysis: {
+      sybilRank: {
+        nodeCount: sybilRankResult.nodeCount,
+        edgeCount: sybilRankResult.edgeCount,
+        iterationsRun: sybilRankResult.iterationsRun,
+        flaggedCount: sybilRankResult.flaggedAddresses.size,
+      },
+      jaccard: {
+        clusterCount: jaccardResult.clusters.length,
+        flaggedCount: jaccardResult.flaggedAddresses.size,
+        clusters: jaccardResult.clusters,
+      },
+      temporal: {
+        lockstepPairCount: temporalResult.lockstepPairs.length,
+        regularAddressCount: temporalResult.regularAddresses.length,
+        flaggedCount: temporalResult.flaggedAddresses.size,
+      },
+    },
   };
 
   res.json(response);
+});
+
+// GET /api/sybil/analysis — Comprehensive sybil detection analysis
+app.get('/api/sybil/analysis', (_req, res) => {
+  ensureSeeded();
+  const allFeedback = getCachedFeedback();
+
+  const sybilClusters = detectSybilClusters(allFeedback);
+  const sybilRankResult = computeSybilRank(allFeedback, DEFAULT_SYBILRANK_CONFIG);
+  const jaccardResult = detectJaccardClusters(allFeedback, DEFAULT_JACCARD_CONFIG);
+  const temporalResult = detectTemporalCorrelation(allFeedback, DEFAULT_TEMPORAL_CONFIG);
+
+  // Merge all flagged addresses across all methods
+  const allFlagged = new Set<string>();
+  for (const cluster of sybilClusters) {
+    for (const addr of cluster) allFlagged.add(addr);
+  }
+  for (const addr of sybilRankResult.flaggedAddresses) allFlagged.add(addr);
+  for (const addr of jaccardResult.flaggedAddresses) allFlagged.add(addr);
+  for (const addr of temporalResult.flaggedAddresses) allFlagged.add(addr);
+
+  // Per-address breakdown
+  const addressDetails: Array<{
+    address: string;
+    methods: string[];
+    sybilRankTrust: number | null;
+    inMutualCluster: boolean;
+    inJaccardCluster: boolean;
+    temporallyCorrelated: boolean;
+    isRegularInterval: boolean;
+  }> = [];
+
+  const regularAddrs = new Set(temporalResult.regularAddresses.map(r => r.address));
+  const mutualAddrs = new Set<string>();
+  for (const cluster of sybilClusters) {
+    for (const addr of cluster) mutualAddrs.add(addr);
+  }
+
+  for (const addr of allFlagged) {
+    const methods: string[] = [];
+    if (mutualAddrs.has(addr)) methods.push('mutual_feedback');
+    if (sybilRankResult.flaggedAddresses.has(addr)) methods.push('sybilrank');
+    if (jaccardResult.flaggedAddresses.has(addr)) methods.push('jaccard');
+    if (temporalResult.flaggedAddresses.has(addr)) methods.push('temporal');
+
+    addressDetails.push({
+      address: addr,
+      methods,
+      sybilRankTrust: sybilRankResult.trustScores.get(addr) ?? null,
+      inMutualCluster: mutualAddrs.has(addr),
+      inJaccardCluster: jaccardResult.flaggedAddresses.has(addr),
+      temporallyCorrelated: temporalResult.flaggedAddresses.has(addr),
+      isRegularInterval: regularAddrs.has(addr),
+    });
+  }
+
+  // Sort by number of detection methods (most suspicious first)
+  addressDetails.sort((a, b) => b.methods.length - a.methods.length);
+
+  res.json({
+    summary: {
+      totalAddressesAnalyzed: new Set(allFeedback.map(f => f.clientAddress)).size,
+      totalFlagged: allFlagged.size,
+      byMethod: {
+        mutualFeedback: mutualAddrs.size,
+        sybilRank: sybilRankResult.flaggedAddresses.size,
+        jaccard: jaccardResult.flaggedAddresses.size,
+        temporal: temporalResult.flaggedAddresses.size,
+      },
+      multiMethodFlagged: addressDetails.filter(a => a.methods.length >= 2).length,
+    },
+    sybilRank: {
+      algorithm: 'SybilRank (Yu et al. IEEE S&P 2008)',
+      description: 'Random walk trust propagation from seed nodes',
+      nodeCount: sybilRankResult.nodeCount,
+      edgeCount: sybilRankResult.edgeCount,
+      iterationsRun: sybilRankResult.iterationsRun,
+      flaggedCount: sybilRankResult.flaggedAddresses.size,
+      trustThreshold: DEFAULT_SYBILRANK_CONFIG.trustThreshold,
+    },
+    jaccard: {
+      algorithm: 'Jaccard Similarity Clustering',
+      description: 'Behavioral fingerprinting via reviewer overlap analysis',
+      clusterCount: jaccardResult.clusters.length,
+      flaggedCount: jaccardResult.flaggedAddresses.size,
+      similarPairCount: jaccardResult.similarPairs.length,
+      clusters: jaccardResult.clusters,
+      threshold: DEFAULT_JACCARD_CONFIG.similarityThreshold,
+    },
+    temporal: {
+      algorithm: 'Temporal Correlation Analysis',
+      description: 'Cross-address timing patterns (lockstep + regularity)',
+      lockstepPairs: temporalResult.lockstepPairs,
+      regularAddresses: temporalResult.regularAddresses,
+      flaggedCount: temporalResult.flaggedAddresses.size,
+    },
+    mutualFeedback: {
+      algorithm: 'Mutual Feedback Graph Analysis',
+      description: 'Connected components of mutual feedback pairs',
+      clusterCount: sybilClusters.length,
+      clusters: sybilClusters.map(c => Array.from(c)),
+    },
+    flaggedAddresses: addressDetails,
+  });
 });
 
 // GET /api/stats — Aggregate statistics
@@ -1827,11 +1999,18 @@ app.get('/api/x402/score/:id', async (req, res) => {
   const velocityFlagged = detectVelocitySpikes(agentFb, 10, 60_000);
   const anomalyFlagged = detectNewSubmitterBurst(agentFb, allFeedback, 5, 60_000);
 
+  const sybilRankResult2 = computeSybilRank(allFeedback, DEFAULT_SYBILRANK_CONFIG);
+  const jaccardResult2 = detectJaccardClusters(allFeedback, DEFAULT_JACCARD_CONFIG);
+  const temporalResult2 = detectTemporalCorrelation(allFeedback, DEFAULT_TEMPORAL_CONFIG);
+
   let sybilMutual = 0;
   let velocityBurst = 0;
   let temporalDecay = 0;
   let newSubmitter = 0;
   let anomalyBurst = 0;
+  let sybilRankFlagged2 = 0;
+  let jaccardCoordinated2 = 0;
+  let temporalCorrelation2 = 0;
 
   const now = Date.now();
   const firstSeenMap = new Map<string, number>();
@@ -1854,6 +2033,9 @@ app.get('/api/x402/score/:id', async (req, res) => {
     if (Math.pow(0.5, ageMs / 86_400_000) < 0.5) temporalDecay++;
     if (newSubmitters.has(fb.clientAddress)) newSubmitter++;
     if (anomalyFlagged.has(fb.id)) anomalyBurst++;
+    if (sybilRankResult2.flaggedAddresses.has(fb.clientAddress)) sybilRankFlagged2++;
+    if (jaccardResult2.flaggedAddresses.has(fb.clientAddress)) jaccardCoordinated2++;
+    if (temporalResult2.flaggedAddresses.has(fb.clientAddress)) temporalCorrelation2++;
   }
 
   const stakeInfo = getSimulatedStake(agentId);
@@ -1890,6 +2072,9 @@ app.get('/api/x402/score/:id', async (req, res) => {
       temporalDecay,
       newSubmitter,
       anomalyBurst,
+      sybilRankFlagged: sybilRankFlagged2,
+      jaccardCoordinated: jaccardCoordinated2,
+      temporalCorrelation: temporalCorrelation2,
     },
     flags: {
       isSybil: agent.isSybil,

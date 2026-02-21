@@ -25,6 +25,9 @@ import {
   detectVelocitySpikes,
   detectNewSubmitterBurst,
 } from '../mitigations/velocity.js';
+import { applySybilRank } from '../mitigations/sybilrank.js';
+import { applyJaccardMitigation } from '../mitigations/jaccard.js';
+import { applyTemporalCorrelation } from '../mitigations/temporal-correlation.js';
 
 // ---------------------------------------------------------------------------
 // Hardened Scoring
@@ -136,6 +139,40 @@ export function computeHardenedSummary(
       weight: flaggedIds.has(f.id) ? config.anomalyDetection.discountFactor : 1.0,
       flags: flaggedIds.has(f.id) ? (['anomaly_burst'] as MitigationFlag[]) : [],
     }));
+    mergeWeights(weights, allFlags, results);
+  }
+
+  // --- 6. SybilRank (random walk trust propagation) ---
+  if (config.sybilRank.enabled) {
+    const { results } = applySybilRank(active, corpus, {
+      iterations: config.sybilRank.iterations,
+      trustThreshold: config.sybilRank.trustThreshold,
+      discountFactor: config.sybilRank.discountFactor,
+      seedStrategy: config.sybilRank.seedStrategy,
+    });
+    mergeWeights(weights, allFlags, results);
+  }
+
+  // --- 7. Jaccard Similarity (behavioral fingerprinting) ---
+  if (config.jaccardSimilarity.enabled) {
+    const { results } = applyJaccardMitigation(active, corpus, {
+      similarityThreshold: config.jaccardSimilarity.similarityThreshold,
+      minClusterSize: config.jaccardSimilarity.minClusterSize,
+      minAgentsReviewed: config.jaccardSimilarity.minAgentsReviewed,
+      discountFactor: config.jaccardSimilarity.discountFactor,
+    });
+    mergeWeights(weights, allFlags, results);
+  }
+
+  // --- 8. Temporal Correlation (lockstep + regularity) ---
+  if (config.temporalCorrelation.enabled) {
+    const { results } = applyTemporalCorrelation(active, corpus, {
+      lockstepWindowMs: config.temporalCorrelation.lockstepWindowMs,
+      minLockstepEvents: config.temporalCorrelation.minLockstepEvents,
+      regularityThreshold: config.temporalCorrelation.regularityThreshold,
+      minFeedbackForRegularity: config.temporalCorrelation.minFeedbackForRegularity,
+      discountFactor: config.temporalCorrelation.discountFactor,
+    });
     mergeWeights(weights, allFlags, results);
   }
 
