@@ -15,7 +15,7 @@
  * skills fill the catalog for skills not yet registered on-chain.
  */
 
-import { fetchAllSkills, enrichSkillsBatch, resolveCli } from './client.js';
+import { fetchAllSkills, enrichSkillsBatch, resolveCli, type ResolvedCli } from './client.js';
 import { cacheIdentity, getCachedIdentities } from '../scoring/reader.js';
 import { registerSkillOnChain } from '../payments/x402.js';
 import type { RegisterMessage } from '../scoring/types.js';
@@ -130,9 +130,9 @@ export async function syncFromClawHub(): Promise<ClawHubSyncResult> {
 export async function enrichPendingSkills(): Promise<void> {
   if (pendingEnrichment.size === 0) return;
 
-  let cliPath: string | null = null;
+  let cli: ResolvedCli | null = null;
   try {
-    cliPath = await resolveCli();
+    cli = await resolveCli();
   } catch {
     console.warn('  [clawhub] CLI not available — skipping enrichment cycle');
     return;
@@ -152,7 +152,7 @@ export async function enrichPendingSkills(): Promise<void> {
     `  [clawhub] Enriching ${skills.length} skills (${pendingEnrichment.size} total pending)...`,
   );
 
-  const result = await enrichSkillsBatch(cliPath, skills, 2, (done, total, _slug, _hasWallet) => {
+  const result = await enrichSkillsBatch(cli, skills, 2, (done, total, _slug, _hasWallet) => {
     if (done % 25 === 0 || done === total) {
       console.log(`  [clawhub] Enrich progress: ${done}/${total}`);
     }

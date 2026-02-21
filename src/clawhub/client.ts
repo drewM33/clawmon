@@ -75,62 +75,81 @@ const SEARCH_CATEGORIES = [
   'personal',
 ];
 
+/** Resolved CLI invocation: command + args prefix for execFile (e.g. npx + ['clawhub'] or path + []) */
+export interface ResolvedCli {
+  command: string;
+  argsPrefix: string[];
+}
+
 /**
- * Resolve the path to the clawhub CLI binary.
- * Uses Node's createRequire first (reliable on Render/CI), then path candidates.
+ * Resolve how to run the clawhub CLI.
+ * Prefers npx (most reliable on Render/CI) since it finds the local package without path resolution.
  */
-export async function resolveCli(): Promise<string> {
+export async function resolveCli(): Promise<ResolvedCli> {
+  // 1. npx clawhub — uses npm's resolution, works regardless of cwd/path (Render, CI, etc.)
+  try {
+    await execFileAsync('npx', ['clawhub', '-V'], {
+      timeout: 10_000,
+      env: { ...process.env, NO_COLOR: '1' },
+    });
+    return { command: 'npx', argsPrefix: ['clawhub'] };
+  } catch {
+    // npx failed
+  }
+
+  // 2. Direct path via createRequire
   const { resolve, dirname } = await import('node:path');
   const { access } = await import('node:fs/promises');
-
   const candidates: string[] = [];
 
-  // 1. createRequire — most reliable: uses Node's module resolution (works on Render regardless of cwd)
   try {
     const { createRequire } = await import('node:module');
     const req = createRequire(import.meta.url);
     const pkgPath = req.resolve('clawhub/package.json');
-    const cliPath = resolve(dirname(pkgPath), 'bin/clawdhub.js');
-    candidates.push(cliPath);
+    candidates.push(resolve(dirname(pkgPath), 'bin/clawdhub.js'));
   } catch {
-    // clawhub not installed or resolve failed
+    /* ignore */
   }
 
-  // 2. process.cwd() — project root (when start command runs from repo root)
   candidates.push(resolve(process.cwd(), 'node_modules/.bin/clawhub'));
   candidates.push(resolve(process.cwd(), 'node_modules/clawhub/bin/clawdhub.js'));
 
-  // 3. Relative to compiled output (dist/src/clawhub/ -> project root is ../../../)
   try {
     const { fileURLToPath } = await import('node:url');
     const thisDir = dirname(fileURLToPath(import.meta.url));
     candidates.push(resolve(thisDir, '../../../node_modules/.bin/clawhub'));
     candidates.push(resolve(thisDir, '../../../node_modules/clawhub/bin/clawdhub.js'));
   } catch {
-    // import.meta.url may not resolve in all environments
+    /* ignore */
   }
 
   for (const candidate of candidates) {
     try {
       await access(candidate);
-      return candidate;
+      return { command: candidate, argsPrefix: [] };
     } catch {
-      // not at this path
+      /* continue */
     }
   }
 
-  // Fall back to PATH lookup
   try {
-    const { stdout } = await execFileAsync('which', ['clawhub'], {
-      timeout: 5_000,
-    });
+    const { stdout } = await execFileAsync('which', ['clawhub'], { timeout: 5_000 });
     const path = stdout.trim();
-    if (path) return path;
+    if (path) return { command: path, argsPrefix: [] };
   } catch {
-    // not found on PATH
+    /* ignore */
   }
 
   throw new Error('clawhub CLI not found. Install with: npm i clawhub');
+}
+
+/** Run clawhub with the given args. */
+function runCli(cli: ResolvedCli, args: string[], opts: { timeout?: number; env?: NodeJS.ProcessEnv } = {}): Promise<{ stdout: string }> {
+  return execFileAsync(cli.command, [...cli.argsPrefix, ...args], {
+    timeout: CLI_TIMEOUT_MS,
+    env: { ...process.env, NO_COLOR: '1' },
+    ...opts,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -175,55 +194,38 @@ function exploreItemToSkill(item: ExploreItem): ClawHubSkill {
  * Retries once on failure (common on Render's network).
  */
 async function exploreSort(
-  cliPath: string,
+  cli: ResolvedCli,
   sort: string,
-  maxPages = 5,
 ): Promise<ClawHubSkill[]> {
-  const all: ClawHubSkill[] = [];
-  let cursor: string | undefined;
+  const run = async (): Promise<ClawHubSkill[]> => {
+    const args = ['explore', '--json', '--limit', '200', '--sort', sort];
+    const { stdout } = await runCli(cli, args);
 
-  for (let page = 0; page < maxPages; page++) {
-    const run = async (): Promise<string | undefined> => {
-      const args = ['explore', '--json', '--limit', '200', '--sort', sort];
-      if (cursor) args.push('--cursor', cursor);
+    const jsonStart = stdout.indexOf('{');
+    if (jsonStart === -1) return [];
 
-      const { stdout } = await execFileAsync(cliPath, args, {
-        timeout: CLI_TIMEOUT_MS,
-        env: { ...process.env, NO_COLOR: '1' },
-      });
+    const data: ExploreResponse = JSON.parse(stdout.slice(jsonStart));
+    if (!Array.isArray(data.items) || data.items.length === 0) return [];
 
-      const jsonStart = stdout.indexOf('{');
-      if (jsonStart === -1) return undefined;
+    return data.items
+      .filter((item) => item && typeof item.slug === 'string')
+      .map(exploreItemToSkill);
+  };
 
-      const data: ExploreResponse = JSON.parse(stdout.slice(jsonStart));
-      if (!Array.isArray(data.items) || data.items.length === 0) return undefined;
-
-      const skills = data.items
-        .filter((item) => item && typeof item.slug === 'string')
-        .map(exploreItemToSkill);
-      all.push(...skills);
-
-      return data.nextCursor ?? undefined;
-    };
-
+  try {
+    return await run();
+  } catch (err) {
     try {
-      cursor = await run();
-      if (!cursor) break;
-    } catch (err) {
-      try {
-        await new Promise((r) => setTimeout(r, 2000));
-        cursor = await run();
-        if (!cursor) break;
-      } catch (retryErr) {
-        console.error(
-          `  [clawhub] explore --sort ${sort} page ${page} failed (after retry):`,
-          retryErr instanceof Error ? retryErr.message : retryErr,
-        );
-        break;
-      }
+      await new Promise((r) => setTimeout(r, 2000));
+      return await run();
+    } catch (retryErr) {
+      console.error(
+        `  [clawhub] explore --sort ${sort} failed (after retry):`,
+        retryErr instanceof Error ? retryErr.message : retryErr,
+      );
+      return [];
     }
   }
-  return all;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,16 +263,12 @@ function parseSearchLine(line: string): ClawHubSkill | null {
  * Retries once on failure (common on Render's network).
  */
 async function searchQuery(
-  cliPath: string,
+  cli: ResolvedCli,
   query: string,
   limit: number,
 ): Promise<ClawHubSkill[]> {
   const run = async (): Promise<ClawHubSkill[]> => {
-    const { stdout } = await execFileAsync(
-      cliPath,
-      ['search', query, '--limit', String(limit)],
-      { timeout: CLI_TIMEOUT_MS, env: { ...process.env, NO_COLOR: '1' } },
-    );
+    const { stdout } = await runCli(cli, ['search', query, '--limit', String(limit)]);
 
     const skills: ClawHubSkill[] = [];
     for (const line of stdout.split('\n')) {
@@ -377,15 +375,11 @@ export function extractWalletFromSkillMd(content: string): string | null {
  * Run `clawhub inspect <slug> --json --files` to get metadata + owner + file list.
  */
 async function inspectSkillMeta(
-  cliPath: string,
+  cli: ResolvedCli,
   slug: string,
 ): Promise<InspectResponse | null> {
   try {
-    const { stdout } = await execFileAsync(
-      cliPath,
-      ['inspect', slug, '--json', '--files'],
-      { timeout: CLI_TIMEOUT_MS, env: { ...process.env, NO_COLOR: '1' } },
-    );
+    const { stdout } = await runCli(cli, ['inspect', slug, '--json', '--files']);
 
     const jsonStart = stdout.indexOf('{');
     if (jsonStart === -1) return null;
@@ -404,15 +398,11 @@ async function inspectSkillMeta(
  * Run `clawhub inspect <slug> --file SKILL.md` to fetch raw SKILL.md content.
  */
 async function inspectSkillFile(
-  cliPath: string,
+  cli: ResolvedCli,
   slug: string,
 ): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync(
-      cliPath,
-      ['inspect', slug, '--file', 'SKILL.md'],
-      { timeout: CLI_TIMEOUT_MS, env: { ...process.env, NO_COLOR: '1' } },
-    );
+    const { stdout } = await runCli(cli, ['inspect', slug, '--file', 'SKILL.md']);
 
     // The CLI prints a spinner line ("- Fetching skill") before the content
     const spinnerEnd = stdout.indexOf('\n');
@@ -439,10 +429,10 @@ async function inspectSkillFile(
  *   - SHA-256 of SKILL.md
  */
 export async function enrichSkillWithInspect(
-  cliPath: string,
+  cli: ResolvedCli,
   skill: ClawHubSkill,
 ): Promise<ClawHubSkill> {
-  const meta = await inspectSkillMeta(cliPath, skill.slug);
+  const meta = await inspectSkillMeta(cli, skill.slug);
   if (!meta) return skill;
 
   const enriched: ClawHubSkill = { ...skill };
@@ -478,7 +468,7 @@ export async function enrichSkillWithInspect(
   }
 
   // Fetch the full SKILL.md content
-  const content = await inspectSkillFile(cliPath, skill.slug);
+  const content = await inspectSkillFile(cli, skill.slug);
   if (content) {
     enriched.skillMd = content;
     const wallet = extractWalletFromSkillMd(content);
@@ -496,7 +486,7 @@ export async function enrichSkillWithInspect(
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export async function enrichSkillsBatch(
-  cliPath: string,
+  cli: ResolvedCli,
   skills: ClawHubSkill[],
   concurrency = 2,
   onProgress?: (done: number, total: number, slug: string, hasWallet: boolean) => void,
@@ -516,7 +506,7 @@ export async function enrichSkillsBatch(
   while (queue.length > 0) {
     const batch = queue.splice(0, concurrency);
     const results = await Promise.allSettled(
-      batch.map((skill) => enrichSkillWithInspect(cliPath, skill)),
+      batch.map((skill) => enrichSkillWithInspect(cli, skill)),
     );
 
     let batchErrors = 0;
@@ -568,9 +558,9 @@ export async function fetchAllSkills(
   concurrency = 4,
   searchLimit = 200,
 ): Promise<ClawHubSkill[]> {
-  let cliPath: string;
+  let cli: ResolvedCli;
   try {
-    cliPath = await resolveCli();
+    cli = await resolveCli();
   } catch (err) {
     console.warn(`  [clawhub] ${err instanceof Error ? err.message : err}`);
     return [];
@@ -594,7 +584,7 @@ export async function fetchAllSkills(
   while (exploreBatches.length > 0) {
     const batch = exploreBatches.splice(0, concurrency);
     const results = await Promise.allSettled(
-      batch.map((sort) => exploreSort(cliPath, sort)),
+      batch.map((sort) => exploreSort(cli, sort)),
     );
     for (const result of results) {
       if (result.status === 'fulfilled') addSkills(result.value);
@@ -610,7 +600,7 @@ export async function fetchAllSkills(
   while (categories.length > 0) {
     const batch = categories.splice(0, concurrency);
     const results = await Promise.allSettled(
-      batch.map((cat) => searchQuery(cliPath, cat, searchLimit)),
+      batch.map((cat) => searchQuery(cli, cat, searchLimit)),
     );
     for (const result of results) {
       if (result.status === 'fulfilled') addSkills(result.value);

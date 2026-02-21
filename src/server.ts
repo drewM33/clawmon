@@ -2815,8 +2815,8 @@ app.post('/api/skills/enrich', async (req, res) => {
         res.status(404).json({ error: `Skill '${slug}' not found in cache` });
         return;
       }
-      const cliPath = await resolveCli();
-      const enriched = await enrichSkillWithInspect(cliPath, existing);
+      const cli = await resolveCli();
+      const enriched = await enrichSkillWithInspect(cli, existing);
       cacheIdentity({
         type: 'register',
         agentId: enriched.slug,
