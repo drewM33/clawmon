@@ -53,6 +53,7 @@ contract StakeEscrow {
     event BoostUnitUpdated(SkillRegistry.RiskTier indexed riskTier, uint256 oldUnitWei, uint256 newUnitWei);
 
     event Staked(uint256 indexed skillId, address indexed provider, uint256 amount, uint256 mintedShares);
+    event Boosted(uint256 indexed skillId, address indexed booster, uint256 amount, uint256 mintedShares);
     event UnstakeRequested(
         uint256 indexed skillId,
         address indexed provider,
@@ -182,6 +183,53 @@ contract StakeEscrow {
 
         emit Staked(skillId, msg.sender, msg.value, shares);
         _emitLevelChangeIfNeeded(skillId, oldLevel);
+    }
+
+    /**
+     * @notice Boost a skill by staking MON (anyone can call — Nitro-style community boost).
+     *         Does NOT require msg.sender to be the skill provider.
+     *         Shares are credited to the booster, not the publisher.
+     * @param skillId  The skill to boost.
+     */
+    function boostSkill(uint256 skillId) external payable {
+        require(msg.value > 0, "ZERO");
+        (, , bool active) = registry.getSkillCore(skillId);
+        require(active, "SKILL_INACTIVE");
+
+        uint8 oldLevel = getTrustLevel(skillId);
+        SkillPool storage p = _pools[skillId];
+        uint256 shares = _assetsToSharesDown(p, msg.value);
+        if (p.totalShares == 0) {
+            shares = msg.value;
+        }
+        require(shares > 0, "ZERO_SHARES");
+
+        p.totalAssets += msg.value;
+        p.totalShares += shares;
+        _providerShares[skillId][msg.sender] += shares;
+
+        emit Boosted(skillId, msg.sender, msg.value, shares);
+        _emitLevelChangeIfNeeded(skillId, oldLevel);
+    }
+
+    /**
+     * @notice Get the publisher's stake (excluding booster shares).
+     */
+    function getPublisherStake(uint256 skillId) external view returns (uint256) {
+        address pub = skillPublisher[skillId];
+        if (pub == address(0)) return 0;
+        return _sharesToAssetsDown(_pools[skillId], _providerShares[skillId][pub]);
+    }
+
+    /**
+     * @notice Get the total community boost (everything except publisher stake).
+     */
+    function getCommunityBoost(uint256 skillId) external view returns (uint256) {
+        address pub = skillPublisher[skillId];
+        uint256 total = _pools[skillId].totalAssets;
+        if (pub == address(0)) return total;
+        uint256 pubStake = _sharesToAssetsDown(_pools[skillId], _providerShares[skillId][pub]);
+        return total > pubStake ? total - pubStake : 0;
     }
 
     function requestUnstake(uint256 skillId, uint256 amount) external {

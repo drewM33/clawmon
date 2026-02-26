@@ -16,13 +16,16 @@ describe("Clawhub Stake + Slashing", function () {
   const MED = 1;
   const HIGH = 2;
 
+  let skillCounter = 0;
+
   async function registerLowRiskSkill(signer) {
+    skillCounter++;
     const tx = await registry
       .connect(signer)
       .registerSkill(
         LOW,
         ethers.id("meta-v1"),
-        ethers.id("clawhub:skill:gmail-integration"),
+        ethers.id(`clawhub:skill:test-${skillCounter}`),
         ethers.id("provider:acme")
       );
     const receipt = await tx.wait();
@@ -164,5 +167,125 @@ describe("Clawhub Stake + Slashing", function () {
         .connect(other)
         .slashSkill(skillId, 1000, ethers.id("POLICY_VIOLATION"), "ipfs://evidence/forbidden", ethers.id("case-2"))
     ).to.be.revertedWith("NOT_AUTHORITY");
+  });
+
+  // ─── Phase 3: Publisher vs Booster Staking ──────────────────────────
+
+  it("boostSkill allows anyone to boost (not just provider)", async function () {
+    const skillId = await registerLowRiskSkill(provider);
+
+    // Provider stakes first
+    await escrow.connect(provider).stake(skillId, { value: ethers.parseEther("1") });
+
+    // Non-provider boosts
+    await escrow.connect(other).boostSkill(skillId, { value: ethers.parseEther("1") });
+
+    // Total should be 2 ETH = 2 boost units = L1
+    expect(await escrow.getSkillStake(skillId)).to.equal(ethers.parseEther("2"));
+    expect(await escrow.getTrustLevel(skillId)).to.equal(1);
+  });
+
+  it("boostSkill emits Boosted event (not Staked)", async function () {
+    const skillId = await registerLowRiskSkill(provider);
+    await escrow.connect(provider).stake(skillId, { value: ethers.parseEther("1") });
+
+    const tx = await escrow.connect(other).boostSkill(skillId, { value: ethers.parseEther("1") });
+    const receipt = await tx.wait();
+
+    const boosted = receipt.logs
+      .map((log) => {
+        try { return escrow.interface.parseLog(log); } catch { return null; }
+      })
+      .find((x) => x && x.name === "Boosted");
+
+    expect(boosted).to.not.be.null;
+    expect(boosted.args.booster).to.equal(other.address);
+    expect(boosted.args.amount).to.equal(ethers.parseEther("1"));
+  });
+
+  it("tracks skillPublisher separately from boosters", async function () {
+    const skillId = await registerLowRiskSkill(provider);
+
+    // Publisher stakes
+    await escrow.connect(provider).stake(skillId, { value: ethers.parseEther("3") });
+    expect(await escrow.skillPublisher(skillId)).to.equal(provider.address);
+
+    // Booster boosts
+    await escrow.connect(other).boostSkill(skillId, { value: ethers.parseEther("4") });
+
+    // Publisher stake vs community boost are tracked separately
+    const pubStake = await escrow.getPublisherStake(skillId);
+    const communityBoost = await escrow.getCommunityBoost(skillId);
+
+    expect(pubStake).to.equal(ethers.parseEther("3"));
+    expect(communityBoost).to.equal(ethers.parseEther("4"));
+
+    // Total is sum
+    expect(await escrow.getSkillStake(skillId)).to.equal(ethers.parseEther("7"));
+    expect(await escrow.getTrustLevel(skillId)).to.equal(2); // 7 boosts = L2
+  });
+
+  it("community boost can push trust level beyond publisher's stake alone", async function () {
+    const skillId = await registerLowRiskSkill(provider);
+
+    // Publisher stakes 2 ETH → L1
+    await escrow.connect(provider).stake(skillId, { value: ethers.parseEther("2") });
+    expect(await escrow.getTrustLevel(skillId)).to.equal(1);
+
+    // Community boosts 5 ETH → total 7 → L2
+    await escrow.connect(other).boostSkill(skillId, { value: ethers.parseEther("5") });
+    expect(await escrow.getTrustLevel(skillId)).to.equal(2);
+  });
+
+  it("booster can unstake their boost shares", async function () {
+    const skillId = await registerLowRiskSkill(provider);
+    await escrow.connect(provider).stake(skillId, { value: ethers.parseEther("1") });
+    await escrow.connect(other).boostSkill(skillId, { value: ethers.parseEther("3") });
+
+    // Booster requests unstake
+    await escrow.connect(other).requestUnstake(skillId, ethers.parseEther("2"));
+    await time.increase(7 * 24 * 60 * 60 + 1);
+
+    const before = await ethers.provider.getBalance(other.address);
+    const tx = await escrow.connect(other).executeUnstake(skillId);
+    const receipt = await tx.wait();
+    const gasCost = receipt.gasUsed * receipt.gasPrice;
+    const after = await ethers.provider.getBalance(other.address);
+
+    // Got MON back
+    expect(after - before + gasCost).to.be.greaterThan(0);
+
+    // Total decreased
+    expect(await escrow.getSkillStake(skillId)).to.be.lessThan(ethers.parseEther("4"));
+  });
+
+  it("slash affects both publisher and booster pro-rata", async function () {
+    const skillId = await registerLowRiskSkill(provider);
+
+    // Publisher stakes 7 ETH, booster stakes 7 ETH → total 14 → L3
+    await escrow.connect(provider).stake(skillId, { value: ethers.parseEther("7") });
+    await escrow.connect(other).boostSkill(skillId, { value: ethers.parseEther("7") });
+    expect(await escrow.getTrustLevel(skillId)).to.equal(3);
+
+    // Slash 50% → total 7 → L2
+    await slashing
+      .connect(authority)
+      .slashSkill(
+        skillId,
+        5000,
+        ethers.id("MALICIOUS"),
+        "ipfs://evidence/slash-boost",
+        ethers.id("case-boost-1")
+      );
+
+    expect(await escrow.getSkillStake(skillId)).to.equal(ethers.parseEther("7"));
+    expect(await escrow.getTrustLevel(skillId)).to.equal(2);
+
+    // Both publisher and booster lost proportionally
+    const pubStake = await escrow.getPublisherStake(skillId);
+    const boostStake = await escrow.getCommunityBoost(skillId);
+    // Each had 50% of pool, so each should have ~3.5 ETH
+    expect(pubStake).to.be.closeTo(ethers.parseEther("3.5"), ethers.parseEther("0.01"));
+    expect(boostStake).to.be.closeTo(ethers.parseEther("3.5"), ethers.parseEther("0.01"));
   });
 });
