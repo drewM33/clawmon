@@ -33,6 +33,8 @@
  *   POST /api/governance/proposals       — Create a new proposal (Phase 10)
  *   POST /api/governance/proposals/:id/vote — Cast a vote (Phase 10)
  *   POST /api/feedback        — Submit new feedback (triggers real-time WS broadcast)
+ *   POST /api/feedback/agent  — Submit agent-to-agent feedback with reputation weighting (Phase 5)
+ *   GET  /api/feedback/agent/stats/:id — Agent feedback breakdown statistics (Phase 5)
  *   POST /api/skills/invoke/:id  — x402 payment → skill invocation → execution receipt (Phase 13)
  *   GET  /api/skills/invoke/:id  — Discover x402 pricing for a skill (Phase 13)
  *   GET  /api/erc8004/contracts  — ERC-8004 contract addresses on Monad (Phase 13)
@@ -204,6 +206,15 @@ import {
   getAgentRegistry,
 } from './erc8004/index.js';
 import type { ProofOfPayment } from './erc8004/types.js';
+import {
+  isAgentReview,
+  extractReviewerAgentId,
+} from './feedback/agent-feedback.js';
+import {
+  computeAgentWeightedSummary,
+  getAgentFeedbackStats,
+} from './scoring/agent-weighted.js';
+import { AGENT_REVIEW_TAG1 } from './feedback/types.js';
 
 // ERC-8004 agent ID mapping: string slug → numeric tokenId on IdentityRegistry
 const erc8004AgentIdMap = new Map<string, number>();
@@ -2563,6 +2574,144 @@ app.post('/api/feedback', async (req, res) => {
     x402Verified: verifiedReceipt !== null,
     proofOfPayment: proofOfPayment ?? undefined,
   });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/feedback/agent — Agent-to-agent feedback (Phase 5)
+// ---------------------------------------------------------------------------
+
+app.post('/api/feedback/agent', async (req, res) => {
+  ensureSeeded();
+
+  const {
+    targetAgentId,
+    reviewerAgentId,
+    reviewerAddress,
+    value,
+    reviewerSkillUsed,
+    automatedAssessment,
+    endpoint,
+    feedbackURI,
+  } = req.body;
+
+  // Validate required fields
+  if (targetAgentId == null || reviewerAgentId == null || value == null || !reviewerAddress) {
+    res.status(400).json({
+      error: 'Missing required fields: targetAgentId, reviewerAgentId, reviewerAddress, value',
+    });
+    return;
+  }
+
+  // Value range check
+  if (typeof value !== 'number' || value < 0 || value > 100) {
+    res.status(400).json({ error: 'value must be a number between 0 and 100' });
+    return;
+  }
+
+  // Self-feedback prevention
+  if (targetAgentId === reviewerAgentId) {
+    res.status(400).json({ error: 'SELF_FEEDBACK: agent cannot review its own skill' });
+    return;
+  }
+
+  // Validate automated assessment if provided
+  if (automatedAssessment) {
+    const { securityScore, reliabilityScore, performanceScore } = automatedAssessment;
+    if (
+      [securityScore, reliabilityScore, performanceScore].some(
+        (s) => typeof s !== 'number' || s < 0 || s > 100,
+      )
+    ) {
+      res.status(400).json({ error: 'Assessment scores must be numbers between 0 and 100' });
+      return;
+    }
+  }
+
+  // Compute reviewer weight from their reputation tier
+  const { weight, tier } = (() => {
+    const rep = getUserReputation(reviewerAddress);
+    if (!rep) return { weight: 0.5, tier: 'unknown' };
+    if (rep.tier === 'whale') return { weight: 5.0, tier: 'whale' };
+    if (rep.hasPublishedSkill) return { weight: 3.0, tier: `${rep.tier}+publisher` };
+    if (rep.tier === 'lobster') return { weight: 2.0, tier: 'lobster' };
+    return { weight: 1.0, tier: 'claw' };
+  })();
+
+  // Build feedback entry with agent-review tags
+  feedbackIdCounter++;
+  const feedbackId = `agent-fb-${feedbackIdCounter}`;
+  const agentIdStr = String(targetAgentId);
+
+  const feedback: Feedback = {
+    id: feedbackId,
+    agentId: agentIdStr,
+    clientAddress: reviewerAddress.toLowerCase(),
+    value,
+    valueDecimals: 0,
+    tag1: AGENT_REVIEW_TAG1,
+    tag2: String(reviewerAgentId),
+    endpoint: endpoint ?? undefined,
+    feedbackURI: feedbackURI ?? undefined,
+    timestamp: Date.now(),
+    revoked: false,
+  };
+
+  // Cache the feedback
+  cacheFeedback(feedback);
+
+  // Emit real-time events
+  const feedbackEvent: FeedbackNewEvent = {
+    type: 'feedback:new',
+    payload: {
+      id: feedback.id,
+      agentId: feedback.agentId,
+      clientAddress: feedback.clientAddress,
+      value: feedback.value,
+      tag1: feedback.tag1,
+      timestamp: feedback.timestamp,
+    },
+  };
+  trustHubEmitter.emit('feedback:new', feedbackEvent);
+
+  res.status(201).json({
+    id: feedbackId,
+    message: 'Agent feedback submitted',
+    feedback,
+    reviewerWeight: weight,
+    reviewerTier: tier,
+    isAgentReview: true,
+  });
+});
+
+// GET /api/feedback/agent/stats/:agentId — Agent feedback breakdown stats
+app.get('/api/feedback/agent/stats/:agentId', (req, res) => {
+  ensureSeeded();
+  const agentId = req.params.agentId;
+  if (!agentId) {
+    res.status(400).json({ error: 'Missing agentId' });
+    return;
+  }
+
+  const allFeedback = getCachedFeedback();
+  const agentFeedback = allFeedback.filter((f) => f.agentId === agentId);
+
+  if (agentFeedback.length === 0) {
+    res.json({
+      agentId,
+      totalFeedback: 0,
+      humanFeedbackCount: 0,
+      agentFeedbackCount: 0,
+      humanAvg: 0,
+      agentAvg: 0,
+      agentWeightedAvg: 0,
+      combinedWeightedAvg: 0,
+      uniqueAgentReviewers: 0,
+    });
+    return;
+  }
+
+  const stats = getAgentFeedbackStats(agentFeedback);
+  res.json(stats);
 });
 
 // ---------------------------------------------------------------------------
