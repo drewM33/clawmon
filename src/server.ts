@@ -2428,6 +2428,24 @@ app.post('/api/feedback', async (req, res) => {
   const identity = identities.get(agentId)!;
   const authPolicy = identity.feedbackAuthPolicy ?? 'open';
 
+  // ── Phase 2: closed/selective gate — reject if publisher hasn't authorized feedback ──
+  if (authPolicy === 'closed') {
+    res.status(403).json({
+      error: 'Feedback not authorized',
+      detail: 'This skill\'s publisher has not authorized feedback. The feedbackAuth policy is "closed".',
+      feedbackAuthPolicy: authPolicy,
+    });
+    return;
+  }
+  if (authPolicy === 'selective') {
+    res.status(403).json({
+      error: 'Feedback requires authorization',
+      detail: 'This skill uses selective feedback. Your address must be whitelisted by the publisher.',
+      feedbackAuthPolicy: authPolicy,
+    });
+    return;
+  }
+
   // ── x402_verified gate: require a valid execution receipt ──
   let verifiedReceipt: ExecutionReceipt | null = null;
   let proofOfPayment: ProofOfPayment | null = null;

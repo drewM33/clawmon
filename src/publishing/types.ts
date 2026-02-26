@@ -77,6 +77,8 @@ export interface PublishResult {
   blockNumber: number;
   /** Timestamp */
   publishedAt: number;
+  /** Transaction hash for feedbackAuth metadata set (Phase 2, undefined if wallet-only) */
+  feedbackAuthTxHash?: string;
 }
 
 // ---------------------------------------------------------------------------

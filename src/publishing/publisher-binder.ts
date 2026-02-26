@@ -1,9 +1,14 @@
 /**
- * Trusted ClawMon — Publisher Binder (Phase 1)
+ * Trusted ClawMon — Publisher Binder (Phase 1 + Phase 2)
  *
  * Off-chain orchestration for the publish + bind + stake flow.
  * Interfaces with the SkillPublisherBinder contract and optionally
  * the ERC-8004 IdentityRegistry for lazy agent registration.
+ *
+ * Phase 2: After publishing, automatically sets feedbackAuth: "open"
+ * on the ERC-8004 IdentityRegistry when the publisher has an agentId.
+ * This ensures 8004 compliance — no skill gets listed without
+ * explicit feedback authorization.
  *
  * Usage:
  *   import { publishSkill } from './publisher-binder.js';
@@ -20,6 +25,7 @@ import type {
   RiskTier,
 } from './types.js';
 import { RISK_TIER_VALUES } from './types.js';
+import { setFeedbackAuthOnChain } from '../scoring/feedback-auth-gate.js';
 
 // ---------------------------------------------------------------------------
 // Contract ABIs (minimal — only the functions we call)
@@ -184,6 +190,22 @@ export async function publishSkill(request: PublishRequest): Promise<PublishResu
   const trustLevel = event ? Number(event.args.trustLevel) : 0;
   const stakedWei = request.atomic ? request.stakeAmountWei : '0';
 
+  // Phase 2: Set feedbackAuth: "open" on ERC-8004 IdentityRegistry
+  // This ensures 8004 compliance — publishers explicitly authorize community feedback
+  let feedbackAuthTxHash: string | undefined;
+  if (erc8004Id > 0) {
+    try {
+      feedbackAuthTxHash = await setFeedbackAuthOnChain(erc8004Id, 'open');
+    } catch (err) {
+      // Non-fatal: skill is published but feedback auth not set on-chain.
+      // Can be retried via setFeedbackAuthOnChain() directly.
+      console.warn(
+        `[publish] Failed to set feedbackAuth for agentId ${erc8004Id}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
   return {
     skillId,
     clawhubSlug: request.skill.slug,
@@ -196,6 +218,7 @@ export async function publishSkill(request: PublishRequest): Promise<PublishResu
     txHash: receipt.hash,
     blockNumber: receipt.blockNumber,
     publishedAt: Math.floor(Date.now() / 1000),
+    feedbackAuthTxHash,
   };
 }
 
