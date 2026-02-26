@@ -12,6 +12,7 @@
 export type WSEventType =
   | 'feedback:new'
   | 'feedback:revoked'
+  | 'feedback:agent'
   | 'score:updated'
   | 'staking:event'
   | 'agent:registered'
@@ -21,6 +22,10 @@ export type WSEventType =
   | 'payment:processed'
   | 'governance:proposal'
   | 'governance:vote'
+  | 'skill:published'
+  | 'skill:boosted'
+  | 'skill:slashed'
+  | 'benefit:activated'
   | 'connection:init';
 
 // ---------------------------------------------------------------------------
@@ -164,12 +169,75 @@ export interface GovernanceVoteEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 7: New event types for publish, boost, slash, benefit flows
+// ---------------------------------------------------------------------------
+
+export interface AgentFeedbackEvent {
+  type: 'feedback:agent';
+  payload: {
+    targetAgentId: string;
+    reviewerAgentId: number;
+    reviewerAddress: string;
+    value: number;
+    reviewerWeight: number;
+    reviewerTier: string;
+    timestamp: number;
+  };
+}
+
+export interface SkillPublishedEvent {
+  type: 'skill:published';
+  payload: {
+    skillId: number;
+    publisher: string;
+    clawhubSlug: string;
+    trustLevel: number;
+    stakedAmount: string;
+    timestamp: number;
+  };
+}
+
+export interface SkillBoostedEvent {
+  type: 'skill:boosted';
+  payload: {
+    skillId: number;
+    booster: string;
+    amount: string;
+    newTrustLevel: number;
+    newBoostUnits: number;
+    timestamp: number;
+  };
+}
+
+export interface SkillSlashedEvent {
+  type: 'skill:slashed';
+  payload: {
+    skillId: number;
+    amount: string;
+    reason: string;
+    caseId: string;
+    timestamp: number;
+  };
+}
+
+export interface BenefitActivatedEvent {
+  type: 'benefit:activated';
+  payload: {
+    skillId: number;
+    oldTier: string;
+    newTier: string;
+    timestamp: number;
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Union type
 // ---------------------------------------------------------------------------
 
 export type WSEvent =
   | FeedbackNewEvent
   | FeedbackRevokedEvent
+  | AgentFeedbackEvent
   | ScoreUpdatedEvent
   | StakingEventPayload
   | AgentRegisteredEvent
@@ -179,6 +247,10 @@ export type WSEvent =
   | PaymentProcessedEvent
   | GovernanceProposalEvent
   | GovernanceVoteEvent
+  | SkillPublishedEvent
+  | SkillBoostedEvent
+  | SkillSlashedEvent
+  | BenefitActivatedEvent
   | ConnectionInitEvent;
 
 // ---------------------------------------------------------------------------
@@ -188,6 +260,7 @@ export type WSEvent =
 export interface TrustHubEvents {
   'feedback:new': [FeedbackNewEvent];
   'feedback:revoked': [FeedbackRevokedEvent];
+  'feedback:agent': [AgentFeedbackEvent];
   'score:updated': [ScoreUpdatedEvent];
   'staking:event': [StakingEventPayload];
   'agent:registered': [AgentRegisteredEvent];
@@ -197,4 +270,8 @@ export interface TrustHubEvents {
   'payment:processed': [PaymentProcessedEvent];
   'governance:proposal': [GovernanceProposalEvent];
   'governance:vote': [GovernanceVoteEvent];
+  'skill:published': [SkillPublishedEvent];
+  'skill:boosted': [SkillBoostedEvent];
+  'skill:slashed': [SkillSlashedEvent];
+  'benefit:activated': [BenefitActivatedEvent];
 }
