@@ -17,6 +17,12 @@ contract StakeEscrow {
     address public owner;
     address public slashingManager;
 
+    /// @notice Authorized binder contracts that can stake on behalf of publishers
+    mapping(address => bool) public authorizedBinders;
+
+    /// @notice Tracks the original publisher for each skill (set on first stake)
+    mapping(uint256 => address) public skillPublisher;
+
     uint256 public constant L1_BOOSTS = 2;
     uint256 public constant L2_BOOSTS = 7;
     uint256 public constant L3_BOOSTS = 14;
@@ -42,10 +48,12 @@ contract StakeEscrow {
 
     event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
     event SlashingManagerSet(address indexed slashingManager);
+    event BinderAuthorized(address indexed binder, bool authorized);
     event UnstakeCooldownUpdated(uint64 oldCooldown, uint64 newCooldown);
     event BoostUnitUpdated(SkillRegistry.RiskTier indexed riskTier, uint256 oldUnitWei, uint256 newUnitWei);
 
     event Staked(uint256 indexed skillId, address indexed provider, uint256 amount, uint256 mintedShares);
+    event Boosted(uint256 indexed skillId, address indexed booster, uint256 amount, uint256 mintedShares);
     event UnstakeRequested(
         uint256 indexed skillId,
         address indexed provider,
@@ -108,11 +116,58 @@ contract StakeEscrow {
         emit BoostUnitUpdated(riskTier, old, newUnitWei);
     }
 
+    /**
+     * @notice Authorize or revoke a binder contract for delegated staking.
+     */
+    function setAuthorizedBinder(address binder, bool authorized) external onlyOwner {
+        require(binder != address(0), "BAD_BINDER");
+        authorizedBinders[binder] = authorized;
+        emit BinderAuthorized(binder, authorized);
+    }
+
+    /**
+     * @notice Stake MON on behalf of a publisher (called by authorized binders).
+     *         Credits shares to the publisher, not msg.sender.
+     * @param skillId   The skill to stake on.
+     * @param provider  The publisher wallet to credit shares to.
+     */
+    function stakeFor(uint256 skillId, address provider) external payable {
+        require(authorizedBinders[msg.sender], "NOT_AUTHORIZED_BINDER");
+        require(msg.value > 0, "ZERO");
+        require(provider != address(0), "BAD_PROVIDER");
+        (address registeredProvider, , bool active) = registry.getSkillCore(skillId);
+        require(active, "SKILL_INACTIVE");
+        require(registeredProvider == provider, "NOT_SKILL_PROVIDER");
+
+        if (skillPublisher[skillId] == address(0)) {
+            skillPublisher[skillId] = provider;
+        }
+
+        uint8 oldLevel = getTrustLevel(skillId);
+        SkillPool storage p = _pools[skillId];
+        uint256 shares = _assetsToSharesDown(p, msg.value);
+        if (p.totalShares == 0) {
+            shares = msg.value;
+        }
+        require(shares > 0, "ZERO_SHARES");
+
+        p.totalAssets += msg.value;
+        p.totalShares += shares;
+        _providerShares[skillId][provider] += shares;
+
+        emit Staked(skillId, provider, msg.value, shares);
+        _emitLevelChangeIfNeeded(skillId, oldLevel);
+    }
+
     function stake(uint256 skillId) external payable {
         require(msg.value > 0, "ZERO");
         (address provider, , bool active) = registry.getSkillCore(skillId);
         require(active, "SKILL_INACTIVE");
         require(provider == msg.sender, "NOT_SKILL_PROVIDER");
+
+        if (skillPublisher[skillId] == address(0)) {
+            skillPublisher[skillId] = msg.sender;
+        }
 
         uint8 oldLevel = getTrustLevel(skillId);
         SkillPool storage p = _pools[skillId];
@@ -128,6 +183,53 @@ contract StakeEscrow {
 
         emit Staked(skillId, msg.sender, msg.value, shares);
         _emitLevelChangeIfNeeded(skillId, oldLevel);
+    }
+
+    /**
+     * @notice Boost a skill by staking MON (anyone can call — Nitro-style community boost).
+     *         Does NOT require msg.sender to be the skill provider.
+     *         Shares are credited to the booster, not the publisher.
+     * @param skillId  The skill to boost.
+     */
+    function boostSkill(uint256 skillId) external payable {
+        require(msg.value > 0, "ZERO");
+        (, , bool active) = registry.getSkillCore(skillId);
+        require(active, "SKILL_INACTIVE");
+
+        uint8 oldLevel = getTrustLevel(skillId);
+        SkillPool storage p = _pools[skillId];
+        uint256 shares = _assetsToSharesDown(p, msg.value);
+        if (p.totalShares == 0) {
+            shares = msg.value;
+        }
+        require(shares > 0, "ZERO_SHARES");
+
+        p.totalAssets += msg.value;
+        p.totalShares += shares;
+        _providerShares[skillId][msg.sender] += shares;
+
+        emit Boosted(skillId, msg.sender, msg.value, shares);
+        _emitLevelChangeIfNeeded(skillId, oldLevel);
+    }
+
+    /**
+     * @notice Get the publisher's stake (excluding booster shares).
+     */
+    function getPublisherStake(uint256 skillId) external view returns (uint256) {
+        address pub = skillPublisher[skillId];
+        if (pub == address(0)) return 0;
+        return _sharesToAssetsDown(_pools[skillId], _providerShares[skillId][pub]);
+    }
+
+    /**
+     * @notice Get the total community boost (everything except publisher stake).
+     */
+    function getCommunityBoost(uint256 skillId) external view returns (uint256) {
+        address pub = skillPublisher[skillId];
+        uint256 total = _pools[skillId].totalAssets;
+        if (pub == address(0)) return total;
+        uint256 pubStake = _sharesToAssetsDown(_pools[skillId], _providerShares[skillId][pub]);
+        return total > pubStake ? total - pubStake : 0;
     }
 
     function requestUnstake(uint256 skillId, uint256 amount) external {

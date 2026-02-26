@@ -33,6 +33,12 @@ contract SkillRegistry {
     uint256 public nextSkillId = 1;
     mapping(uint256 => Skill) private _skills;
 
+    /// @notice Authorized binder contracts that can register skills on behalf of publishers
+    mapping(address => bool) public authorizedBinders;
+
+    /// @notice Prevents the same ClawHub skill from being registered twice
+    mapping(bytes32 => bool) public clawhubIdUsed;
+
     event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
     event SkillRegistered(
         uint256 indexed skillId,
@@ -45,6 +51,7 @@ contract SkillRegistry {
     event SkillStatusChanged(uint256 indexed skillId, bool active);
     event SkillMetadataUpdated(uint256 indexed skillId, bytes32 metadataHash);
     event SkillMappingUpdated(uint256 indexed skillId, bytes32 clawhubSkillId, bytes32 providerIdentityHash);
+    event BinderAuthorized(address indexed binder, bool authorized);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "NOT_OWNER");
@@ -68,6 +75,53 @@ contract SkillRegistry {
         emit OwnershipTransferred(old, newOwner);
     }
 
+    /**
+     * @notice Authorize or revoke a binder contract for delegated registration.
+     */
+    function setAuthorizedBinder(address binder, bool authorized) external onlyOwner {
+        require(binder != address(0), "BAD_BINDER");
+        authorizedBinders[binder] = authorized;
+        emit BinderAuthorized(binder, authorized);
+    }
+
+    /**
+     * @notice Register a skill on behalf of a publisher (called by authorized binders).
+     * @param provider  The publisher wallet that owns the skill.
+     */
+    function registerSkillFor(
+        address provider,
+        RiskTier risk,
+        bytes32 metadataHash,
+        bytes32 clawhubSkillId,
+        bytes32 providerIdentityHash
+    ) external returns (uint256 skillId) {
+        require(authorizedBinders[msg.sender], "NOT_AUTHORIZED_BINDER");
+        require(provider != address(0), "BAD_PROVIDER");
+        require(clawhubSkillId != bytes32(0), "MISSING_CLAWHUB_ID");
+        require(providerIdentityHash != bytes32(0), "MISSING_PROVIDER_ID");
+        require(!clawhubIdUsed[clawhubSkillId], "CLAWHUB_ID_ALREADY_REGISTERED");
+
+        clawhubIdUsed[clawhubSkillId] = true;
+        skillId = nextSkillId++;
+        _skills[skillId] = Skill({
+            provider: provider,
+            risk: risk,
+            metadataHash: metadataHash,
+            clawhubSkillId: clawhubSkillId,
+            providerIdentityHash: providerIdentityHash,
+            active: true
+        });
+
+        emit SkillRegistered(
+            skillId,
+            provider,
+            risk,
+            metadataHash,
+            clawhubSkillId,
+            providerIdentityHash
+        );
+    }
+
     function registerSkill(
         RiskTier risk,
         bytes32 metadataHash,
@@ -76,7 +130,9 @@ contract SkillRegistry {
     ) external returns (uint256 skillId) {
         require(clawhubSkillId != bytes32(0), "MISSING_CLAWHUB_ID");
         require(providerIdentityHash != bytes32(0), "MISSING_PROVIDER_ID");
+        require(!clawhubIdUsed[clawhubSkillId], "CLAWHUB_ID_ALREADY_REGISTERED");
 
+        clawhubIdUsed[clawhubSkillId] = true;
         skillId = nextSkillId++;
         _skills[skillId] = Skill({
             provider: msg.sender,

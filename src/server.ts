@@ -33,6 +33,15 @@
  *   POST /api/governance/proposals       — Create a new proposal (Phase 10)
  *   POST /api/governance/proposals/:id/vote — Cast a vote (Phase 10)
  *   POST /api/feedback        — Submit new feedback (triggers real-time WS broadcast)
+ *   POST /api/feedback/agent  — Submit agent-to-agent feedback with reputation weighting (Phase 5)
+ *   GET  /api/feedback/agent/stats/:id — Agent feedback breakdown statistics (Phase 5)
+ *   GET  /api/skills/:id/benefits — Current benefit tier + allocation (Phase 6)
+ *   POST /api/skills/:id/boost — Submit boost stake for a skill (Phase 6)
+ *   GET  /api/skills/:id/feedback/agent — Agent feedback for a skill (Phase 7)
+ *   POST /api/validators/propose-slash — Propose slash (Phase 7)
+ *   POST /api/validators/vote — Vote on slash proposal (Phase 7)
+ *   GET  /api/validators/proposals — List slash proposals (Phase 7)
+ *   GET  /api/benefits/tiers — Benefit tier configurations (Phase 7)
  *   POST /api/skills/invoke/:id  — x402 payment → skill invocation → execution receipt (Phase 13)
  *   GET  /api/skills/invoke/:id  — Discover x402 pricing for a skill (Phase 13)
  *   GET  /api/erc8004/contracts  — ERC-8004 contract addresses on Monad (Phase 13)
@@ -204,6 +213,26 @@ import {
   getAgentRegistry,
 } from './erc8004/index.js';
 import type { ProofOfPayment } from './erc8004/types.js';
+import {
+  isAgentReview,
+  extractReviewerAgentId,
+} from './feedback/agent-feedback.js';
+import {
+  computeAgentWeightedSummary,
+  getAgentFeedbackStats,
+} from './scoring/agent-weighted.js';
+import { AGENT_REVIEW_TAG1 } from './feedback/types.js';
+import {
+  BENEFIT_CONFIGS,
+  getBenefitStatusOffline,
+} from './benefits/index.js';
+import type {
+  AgentFeedbackEvent,
+  SkillPublishedEvent,
+  SkillBoostedEvent,
+  SkillSlashedEvent,
+  BenefitActivatedEvent,
+} from './events/types.js';
 
 // ERC-8004 agent ID mapping: string slug → numeric tokenId on IdentityRegistry
 const erc8004AgentIdMap = new Map<string, number>();
@@ -2428,6 +2457,24 @@ app.post('/api/feedback', async (req, res) => {
   const identity = identities.get(agentId)!;
   const authPolicy = identity.feedbackAuthPolicy ?? 'open';
 
+  // ── Phase 2: closed/selective gate — reject if publisher hasn't authorized feedback ──
+  if (authPolicy === 'closed') {
+    res.status(403).json({
+      error: 'Feedback not authorized',
+      detail: 'This skill\'s publisher has not authorized feedback. The feedbackAuth policy is "closed".',
+      feedbackAuthPolicy: authPolicy,
+    });
+    return;
+  }
+  if (authPolicy === 'selective') {
+    res.status(403).json({
+      error: 'Feedback requires authorization',
+      detail: 'This skill uses selective feedback. Your address must be whitelisted by the publisher.',
+      feedbackAuthPolicy: authPolicy,
+    });
+    return;
+  }
+
   // ── x402_verified gate: require a valid execution receipt ──
   let verifiedReceipt: ExecutionReceipt | null = null;
   let proofOfPayment: ProofOfPayment | null = null;
@@ -2545,6 +2592,144 @@ app.post('/api/feedback', async (req, res) => {
     x402Verified: verifiedReceipt !== null,
     proofOfPayment: proofOfPayment ?? undefined,
   });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/feedback/agent — Agent-to-agent feedback (Phase 5)
+// ---------------------------------------------------------------------------
+
+app.post('/api/feedback/agent', async (req, res) => {
+  ensureSeeded();
+
+  const {
+    targetAgentId,
+    reviewerAgentId,
+    reviewerAddress,
+    value,
+    reviewerSkillUsed,
+    automatedAssessment,
+    endpoint,
+    feedbackURI,
+  } = req.body;
+
+  // Validate required fields
+  if (targetAgentId == null || reviewerAgentId == null || value == null || !reviewerAddress) {
+    res.status(400).json({
+      error: 'Missing required fields: targetAgentId, reviewerAgentId, reviewerAddress, value',
+    });
+    return;
+  }
+
+  // Value range check
+  if (typeof value !== 'number' || value < 0 || value > 100) {
+    res.status(400).json({ error: 'value must be a number between 0 and 100' });
+    return;
+  }
+
+  // Self-feedback prevention
+  if (targetAgentId === reviewerAgentId) {
+    res.status(400).json({ error: 'SELF_FEEDBACK: agent cannot review its own skill' });
+    return;
+  }
+
+  // Validate automated assessment if provided
+  if (automatedAssessment) {
+    const { securityScore, reliabilityScore, performanceScore } = automatedAssessment;
+    if (
+      [securityScore, reliabilityScore, performanceScore].some(
+        (s) => typeof s !== 'number' || s < 0 || s > 100,
+      )
+    ) {
+      res.status(400).json({ error: 'Assessment scores must be numbers between 0 and 100' });
+      return;
+    }
+  }
+
+  // Compute reviewer weight from their reputation tier
+  const { weight, tier } = (() => {
+    const rep = getUserReputation(reviewerAddress);
+    if (!rep) return { weight: 0.5, tier: 'unknown' };
+    if (rep.tier === 'whale') return { weight: 5.0, tier: 'whale' };
+    if (rep.hasPublishedSkill) return { weight: 3.0, tier: `${rep.tier}+publisher` };
+    if (rep.tier === 'lobster') return { weight: 2.0, tier: 'lobster' };
+    return { weight: 1.0, tier: 'claw' };
+  })();
+
+  // Build feedback entry with agent-review tags
+  feedbackIdCounter++;
+  const feedbackId = `agent-fb-${feedbackIdCounter}`;
+  const agentIdStr = String(targetAgentId);
+
+  const feedback: Feedback = {
+    id: feedbackId,
+    agentId: agentIdStr,
+    clientAddress: reviewerAddress.toLowerCase(),
+    value,
+    valueDecimals: 0,
+    tag1: AGENT_REVIEW_TAG1,
+    tag2: String(reviewerAgentId),
+    endpoint: endpoint ?? undefined,
+    feedbackURI: feedbackURI ?? undefined,
+    timestamp: Date.now(),
+    revoked: false,
+  };
+
+  // Cache the feedback
+  cacheFeedback(feedback);
+
+  // Emit real-time events
+  const feedbackEvent: FeedbackNewEvent = {
+    type: 'feedback:new',
+    payload: {
+      id: feedback.id,
+      agentId: feedback.agentId,
+      clientAddress: feedback.clientAddress,
+      value: feedback.value,
+      tag1: feedback.tag1,
+      timestamp: feedback.timestamp,
+    },
+  };
+  trustHubEmitter.emit('feedback:new', feedbackEvent);
+
+  res.status(201).json({
+    id: feedbackId,
+    message: 'Agent feedback submitted',
+    feedback,
+    reviewerWeight: weight,
+    reviewerTier: tier,
+    isAgentReview: true,
+  });
+});
+
+// GET /api/feedback/agent/stats/:agentId — Agent feedback breakdown stats
+app.get('/api/feedback/agent/stats/:agentId', (req, res) => {
+  ensureSeeded();
+  const agentId = req.params.agentId;
+  if (!agentId) {
+    res.status(400).json({ error: 'Missing agentId' });
+    return;
+  }
+
+  const allFeedback = getCachedFeedback();
+  const agentFeedback = allFeedback.filter((f) => f.agentId === agentId);
+
+  if (agentFeedback.length === 0) {
+    res.json({
+      agentId,
+      totalFeedback: 0,
+      humanFeedbackCount: 0,
+      agentFeedbackCount: 0,
+      humanAvg: 0,
+      agentAvg: 0,
+      agentWeightedAvg: 0,
+      combinedWeightedAvg: 0,
+      uniqueAgentReviewers: 0,
+    });
+    return;
+  }
+
+  const stats = getAgentFeedbackStats(agentFeedback);
+  res.json(stats);
 });
 
 // ---------------------------------------------------------------------------
@@ -3018,6 +3203,198 @@ if (process.env.NODE_ENV === 'production' && existsSync(dashboardDist)) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 7: End-to-End Orchestration API Endpoints
+// ---------------------------------------------------------------------------
+
+// GET /api/skills/:id/benefits — Current benefit tier + allocation for a skill
+app.get('/api/skills/:id/benefits', (req, res) => {
+  ensureSeeded();
+  const skillId = req.params.id;
+  if (!skillId) {
+    res.status(400).json({ error: 'Missing skill id' });
+    return;
+  }
+
+  // Use simulated staking data to derive benefit tier
+  const simStake = getSimulatedStake(skillId);
+  const boostUnits = simStake ? Math.floor(simStake.totalStakeEth) : 0;
+  const trustLevel = boostUnits >= 14 ? 3 : boostUnits >= 7 ? 2 : boostUnits >= 2 ? 1 : 0;
+
+  const status = getBenefitStatusOffline(Number(skillId) || 0, boostUnits, trustLevel);
+  res.json(status);
+});
+
+// POST /api/skills/:id/boost — Submit boost stake for a skill
+app.post('/api/skills/:id/boost', (req, res) => {
+  ensureSeeded();
+  const skillId = req.params.id;
+  const { boosterAddress, amountMon } = req.body;
+
+  if (!skillId || !boosterAddress || amountMon == null) {
+    res.status(400).json({ error: 'Missing required fields: boosterAddress, amountMon' });
+    return;
+  }
+
+  if (typeof amountMon !== 'number' || amountMon <= 0) {
+    res.status(400).json({ error: 'amountMon must be a positive number' });
+    return;
+  }
+
+  // In production, this calls StakeEscrow.boostSkill() on-chain.
+  // For now, simulate and emit event.
+  const oldLevel = 0;
+  const newLevel = amountMon >= 14 ? 3 : amountMon >= 7 ? 2 : amountMon >= 2 ? 1 : 0;
+
+  const boostEvent: SkillBoostedEvent = {
+    type: 'skill:boosted',
+    payload: {
+      skillId: Number(skillId),
+      booster: boosterAddress,
+      amount: String(amountMon),
+      newTrustLevel: newLevel,
+      newBoostUnits: Math.floor(amountMon),
+      timestamp: Date.now(),
+    },
+  };
+  trustHubEmitter.emit('skill:boosted', boostEvent);
+
+  // If tier changed, emit benefit event
+  const oldTierName = oldLevel >= 3 ? 'gold' : oldLevel >= 2 ? 'silver' : oldLevel >= 1 ? 'bronze' : 'none';
+  const newTierName = newLevel >= 3 ? 'gold' : newLevel >= 2 ? 'silver' : newLevel >= 1 ? 'bronze' : 'none';
+  if (oldTierName !== newTierName) {
+    const benefitEvent: BenefitActivatedEvent = {
+      type: 'benefit:activated',
+      payload: {
+        skillId: Number(skillId),
+        oldTier: oldTierName,
+        newTier: newTierName,
+        timestamp: Date.now(),
+      },
+    };
+    trustHubEmitter.emit('benefit:activated', benefitEvent);
+  }
+
+  res.status(201).json({
+    message: 'Boost submitted',
+    skillId,
+    booster: boosterAddress,
+    amountMon,
+    newTrustLevel: newLevel,
+    benefitTier: newTierName,
+  });
+});
+
+// GET /api/skills/:id/feedback/agent — Agent-submitted feedback for a skill
+app.get('/api/skills/:id/feedback/agent', (req, res) => {
+  ensureSeeded();
+  const skillId = req.params.id;
+  if (!skillId) {
+    res.status(400).json({ error: 'Missing skill id' });
+    return;
+  }
+
+  const allFeedback = getCachedFeedback();
+  const agentFeedback = allFeedback.filter(
+    (f) => f.agentId === skillId && isAgentReview(f.tag1) && !f.revoked,
+  );
+
+  const entries = agentFeedback.map((f) => ({
+    id: f.id,
+    reviewerAddress: f.clientAddress,
+    reviewerAgentId: extractReviewerAgentId(f.tag2),
+    value: f.value,
+    tag1: f.tag1,
+    tag2: f.tag2,
+    timestamp: f.timestamp,
+    feedbackURI: f.feedbackURI,
+  }));
+
+  res.json({
+    skillId,
+    agentFeedbackCount: entries.length,
+    feedback: entries,
+  });
+});
+
+// GET /api/validators/proposals — List all slash proposals
+app.get('/api/validators/proposals', (_req, res) => {
+  ensureSeeded();
+  // Return empty list — in production, reads from SlashingManager contract.
+  // This endpoint is the API gateway for Phase 4's on-chain governance.
+  res.json({
+    proposals: [],
+    totalCount: 0,
+    pendingCount: 0,
+    executedCount: 0,
+    rejectedCount: 0,
+  });
+});
+
+// POST /api/validators/propose-slash — Propose a slash (validator only)
+app.post('/api/validators/propose-slash', (req, res) => {
+  ensureSeeded();
+  const { skillId, severityBps, reason, evidenceURI, caseId, validatorAddress } = req.body;
+
+  if (!skillId || !severityBps || !reason || !evidenceURI || !caseId || !validatorAddress) {
+    res.status(400).json({
+      error: 'Missing required fields: skillId, severityBps, reason, evidenceURI, caseId, validatorAddress',
+    });
+    return;
+  }
+
+  if (severityBps < 0 || severityBps > 10000) {
+    res.status(400).json({ error: 'severityBps must be 0-10000' });
+    return;
+  }
+
+  // In production, calls SlashingManager.proposeSlash() on-chain.
+  res.status(201).json({
+    message: 'Slash proposal submitted',
+    caseId,
+    skillId,
+    severityBps,
+    proposer: validatorAddress,
+    status: 'pending',
+    approvals: 1,
+    rejections: 0,
+  });
+});
+
+// POST /api/validators/vote — Vote on a slash proposal
+app.post('/api/validators/vote', (req, res) => {
+  ensureSeeded();
+  const { caseId, validatorAddress, approve } = req.body;
+
+  if (!caseId || !validatorAddress || approve == null) {
+    res.status(400).json({
+      error: 'Missing required fields: caseId, validatorAddress, approve (boolean)',
+    });
+    return;
+  }
+
+  // In production, calls SlashingManager.voteOnSlash() on-chain.
+  res.status(200).json({
+    message: `Vote ${approve ? 'approved' : 'rejected'}`,
+    caseId,
+    voter: validatorAddress,
+    approve,
+  });
+});
+
+// GET /api/benefits/tiers — Available benefit tier configurations
+app.get('/api/benefits/tiers', (_req, res) => {
+  res.json({
+    tiers: Object.values(BENEFIT_CONFIGS),
+    boostThresholds: {
+      none: 0,
+      bronze: 2,
+      silver: 7,
+      gold: 14,
+    },
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 
@@ -3056,6 +3433,14 @@ initWebSocketServer(httpServer);
     console.log('    GET  /api/payments/overview  — x402 payments (Phase 9)');
     console.log('    GET  /api/governance/proposals — Governance (Phase 10)');
     console.log('    POST /api/feedback          — Submit feedback (real-time WS + on-chain)');
+    console.log('    POST /api/feedback/agent    — Agent-to-agent feedback (Phase 5)');
+    console.log('    GET  /api/skills/:id/benefits — Benefit tier + allocation (Phase 6)');
+    console.log('    POST /api/skills/:id/boost  — Boost a skill (Phase 6)');
+    console.log('    GET  /api/skills/:id/feedback/agent — Agent feedback for skill (Phase 7)');
+    console.log('    POST /api/validators/propose-slash — Propose slash (Phase 7)');
+    console.log('    POST /api/validators/vote   — Vote on slash proposal (Phase 7)');
+    console.log('    GET  /api/validators/proposals — List slash proposals (Phase 7)');
+    console.log('    GET  /api/benefits/tiers    — Benefit tier configs (Phase 7)');
     console.log('    POST /api/skills/sync-clawhub — Trigger ClawHub registry sync');
     console.log(`    GET  /api/x402/score/:id    — Premium trust score (x402 paywall, ${X402_PRICE} USDC)`);
     console.log(`    WS   ws://localhost:${PORT}/ws — Real-time event stream\n`);
